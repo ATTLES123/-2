@@ -1,0 +1,14 @@
+{
+  "extensions": {
+    "album_book": {
+      "bind_id": "luochaoxi_private_album_v1",
+      "profile": "pure-plugin-flagship",
+      "version": 1,
+      "variable_key": "album_unlocked_ids",
+      "variable_scope": "global",
+      "trigger_key": "album_unlock_queue",
+      "trigger_scope": "global",
+      "clear_trigger_on_read": true
+    }
+  }
+}

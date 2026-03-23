@@ -1,0 +1,11 @@
+{
+    "display_name": "Album Bridge Pure",
+    "loading_order": 25,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "OpenAI Codex",
+    "version": "0.2.0",
+    "homePage": "local"
+}

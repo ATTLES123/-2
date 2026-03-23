@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Achievement Album</title>
+    <link rel="stylesheet" href="./album-frame.css">
+</head>
+<body>
+    <main class="scene" id="scene">
+        <div class="scene__ambient"></div>
+        <div class="scene__glow"></div>
+        <div class="scene__dust"></div>
+        <div class="scene__vignette"></div>
+
+        <section class="book-stage" id="bookStage">
+            <div class="book-stage__shadow"></div>
+            <div class="book-shell" id="bookShell">
+                <div class="book-shell__cover" id="frontCover">
+                    <div class="cover-face">
+                        <div class="cover-face__stitch"></div>
+                        <div class="cover-face__foil"></div>
+                        <div class="cover-face__emblem">Chronicle</div>
+                        <div class="cover-face__subtitle">Private Archive</div>
+                        <div class="cover-face__strap"></div>
+                    </div>
+                </div>
+
+                <div class="book-shell__block">
+                    <div class="book-spine">
+                        <div class="book-spine__groove"></div>
+                    </div>
+
+                    <section class="page page--left">
+                        <div class="page__paper">
+                            <div class="page__edge page__edge--inner"></div>
+                            <div class="page__edge page__edge--outer"></div>
+                            <header class="page-header">
+                                <span class="page-header__eyebrow">Archive</span>
+                                <h1 class="page-header__title" id="bookTitle">成就典藏</h1>
+                                <p class="page-header__subtitle" id="bookSubtitle">目录与章节进度</p>
+                            </header>
+                            <div class="page-stats">
+                                <div class="page-stats__item">
+                                    <span class="page-stats__label">已解锁</span>
+                                    <strong class="page-stats__value" id="globalUnlockCount">0</strong>
+                                </div>
+                                <div class="page-stats__item">
+                                    <span class="page-stats__label">总数量</span>
+                                    <strong class="page-stats__value" id="globalAchievementCount">0</strong>
+                                </div>
+                            </div>
+                            <div class="chapter-list" id="chapterList"></div>
+                            <footer class="page-footer">
+                                <span id="leftPageNumber">001</span>
+                            </footer>
+                        </div>
+                    </section>
+
+                    <section class="page page--right">
+                        <div class="page__paper">
+                            <div class="page__edge page__edge--inner"></div>
+                            <div class="page__edge page__edge--outer"></div>
+                            <header class="spread-header">
+                                <div>
+                                    <span class="spread-header__eyebrow" id="chapterEyebrow">章节</span>
+                                    <h2 class="spread-header__title" id="chapterTitle">初遇篇</h2>
+                                </div>
+                                <div class="spread-header__progress" id="chapterProgress">0 / 0</div>
+                            </header>
+                            <div class="achievement-grid" id="achievementGrid"></div>
+                            <footer class="page-footer">
+                                <span id="rightPageNumber">002</span>
+                            </footer>
+                        </div>
+                    </section>
+
+                    <div class="flip-sheet" id="flipSheet" aria-hidden="true">
+                        <div class="flip-sheet__shadow"></div>
+                        <div class="flip-sheet__face flip-sheet__face--front">
+                            <div class="flip-sheet__paper">
+                                <div class="flip-sheet__content" id="flipFrontContent"></div>
+                            </div>
+                        </div>
+                        <div class="flip-sheet__face flip-sheet__face--back">
+                            <div class="flip-sheet__paper">
+                                <div class="flip-sheet__content" id="flipBackContent"></div>
+                            </div>
+                        </div>
+                        <div class="flip-sheet__edge"></div>
+                        <div class="flip-sheet__shine"></div>
+                    </div>
+
+                    <div class="paper-stack paper-stack--left"></div>
+                    <div class="paper-stack paper-stack--right"></div>
+                </div>
+            </div>
+
+            <div class="interaction-hotspot interaction-hotspot--prev" id="prevHotspot"></div>
+            <div class="interaction-hotspot interaction-hotspot--next" id="nextHotspot"></div>
+            <div class="interaction-hotspot interaction-hotspot--close" id="closeHotspot"></div>
+        </section>
+
+        <aside class="unlock-toast" id="unlockToast" aria-live="polite">
+            <div class="unlock-toast__eyebrow">成就解锁</div>
+            <div class="unlock-toast__title" id="unlockToastTitle">新的记忆被收录</div>
+            <div class="unlock-toast__id" id="unlockToastId">RE_001</div>
+        </aside>
+    </main>
+
+    <script type="module" src="./album-frame.js"></script>
+</body>
+</html>
