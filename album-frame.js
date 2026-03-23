@@ -7,6 +7,20 @@ import {
 } from './data/achievements.js';
 import { getAchievementAsset } from './data/asset-manifest.js';
 
+function normalizeAchievementId(value) {
+    if (typeof value !== 'string') {
+        return '';
+    }
+
+    const trimmed = value.trim().toUpperCase();
+    const match = trimmed.match(/^([A-Z]{2})_?([0-9]{3})$/);
+    if (!match) {
+        return '';
+    }
+
+    return `${match[1]}_${match[2]}`;
+}
+
 function emitHostEvent(event) {
     try {
         window.parent?.__albumBridgePluginHost?.handleFrameEvent?.(event);
@@ -184,7 +198,11 @@ function totalPagesForChapter(chapterId) {
 }
 
 function normalizeUnlockedIds(ids) {
-    return [...new Set((Array.isArray(ids) ? ids : []).filter(id => typeof id === 'string' && id.trim()))];
+    return [...new Set(
+        (Array.isArray(ids) ? ids : [])
+            .map(normalizeAchievementId)
+            .filter(Boolean),
+    )];
 }
 
 function createAchievementMeta(id) {
@@ -738,12 +756,13 @@ function closeBook(notifyParent = true) {
 }
 
 function openTo(id) {
-    const achievement = ACHIEVEMENT_INDEX[id];
-    const chapter = chapterForId(id);
+    const normalizedId = normalizeAchievementId(id);
+    const achievement = ACHIEVEMENT_INDEX[normalizedId];
+    const chapter = chapterForId(normalizedId);
     if (achievement && chapter) {
         state.activeChapterIndex = CHAPTERS.findIndex(item => item.id === chapter.id);
         const chapterItems = ACHIEVEMENTS_BY_CHAPTER[chapter.id] ?? [];
-        const indexInChapter = chapterItems.findIndex(item => item.id === id);
+        const indexInChapter = chapterItems.findIndex(item => item.id === normalizedId);
         state.activePage = Math.max(0, Math.floor(indexInChapter / PAGE_SIZE));
     }
 
@@ -756,7 +775,7 @@ function applyUnlockedState(nextIds, incomingUnlockId = '') {
     const normalized = normalizeUnlockedIds(nextIds);
     state.unlockedIds = normalized;
 
-    const unlockedId = incomingUnlockId || normalized.find(id => !previousIds.has(id)) || '';
+    const unlockedId = normalizeAchievementId(incomingUnlockId) || normalized.find(id => !previousIds.has(id)) || '';
     if (unlockedId) {
         showUnlockToast(unlockedId);
     }

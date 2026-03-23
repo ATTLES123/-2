@@ -6,6 +6,7 @@ const DEFAULT_VARIABLE_KEY = 'album_unlocked_ids';
 const DEFAULT_VARIABLE_SCOPE = 'global';
 const DEFAULT_TRIGGER_KEY = 'album_unlock_queue';
 const DEFAULT_TRIGGER_SCOPE = 'global';
+const DEFAULT_MVU_PATH = 'stat_data.成就';
 const VARIABLE_POLL_MS = 1000;
 const FRAME_URL = new URL('./album-frame.html', import.meta.url).href;
 
@@ -23,11 +24,30 @@ const state = {
         overlay: null,
         frame: null,
         backdrop: null,
+        settings: null,
     },
 };
 
+function normalizeAchievementId(value) {
+    if (typeof value !== 'string') {
+        return '';
+    }
+
+    const trimmed = value.trim().toUpperCase();
+    const match = trimmed.match(/^([A-Z]{2})_?([0-9]{3})$/);
+    if (!match) {
+        return '';
+    }
+
+    return `${match[1]}_${match[2]}`;
+}
+
 function uniqueIds(values) {
-    return [...new Set(values.filter(value => typeof value === 'string' && value.trim()))];
+    return [...new Set(
+        values
+            .map(normalizeAchievementId)
+            .filter(Boolean),
+    )];
 }
 
 function parseUnlockedIds(value) {
@@ -60,7 +80,7 @@ function parseAchievementIdsFromText(value) {
         return [];
     }
 
-    const matches = value.match(/[A-Z]{2}_[0-9]{3}/g) || [];
+    const matches = value.match(/[A-Z]{2}_?[0-9]{3}/gi) || [];
     return uniqueIds(matches);
 }
 
@@ -86,8 +106,53 @@ function getBindingFromCharacter(character) {
         triggerKey: album.trigger_key || DEFAULT_TRIGGER_KEY,
         triggerScope: album.trigger_scope || DEFAULT_TRIGGER_SCOPE,
         clearTriggerOnRead: album.clear_trigger_on_read !== false,
+        readMvuAchievements: album.read_mvu_achievements === true,
+        mvuPath: typeof album.mvu_path === 'string' && album.mvu_path.trim()
+            ? album.mvu_path.trim()
+            : DEFAULT_MVU_PATH,
         characterName: character?.name || '',
     };
+}
+
+function readNestedValue(source, path) {
+    if (!source || typeof source !== 'object' || typeof path !== 'string' || !path.trim()) {
+        return null;
+    }
+
+    return path
+        .split('.')
+        .map(segment => segment.trim())
+        .filter(Boolean)
+        .reduce((current, segment) => {
+            if (current && typeof current === 'object' && segment in current) {
+                return current[segment];
+            }
+
+            return null;
+        }, source);
+}
+
+function readMvuAchievementIds(binding) {
+    if (!binding?.readMvuAchievements) {
+        return [];
+    }
+
+    const mvu = window.Mvu ?? window.parent?.Mvu;
+    if (!mvu?.getMvuData) {
+        return [];
+    }
+
+    try {
+        const payload = mvu.getMvuData({ type: 'message', message_id: -1 });
+        const achievements = readNestedValue(payload, binding.mvuPath);
+        if (!achievements || typeof achievements !== 'object' || Array.isArray(achievements)) {
+            return [];
+        }
+
+        return uniqueIds(Object.keys(achievements));
+    } catch {
+        return [];
+    }
 }
 
 function getVariableBag(context, scope) {
@@ -123,7 +188,8 @@ function writeScopedVariable(context, key, scope, value) {
 function getUnlockedIds(context, binding) {
     const metadataIds = parseUnlockedIds(context.chatMetadata?.album_book?.unlocked_ids);
     const variableIds = parseUnlockedIds(readScopedVariable(context, binding.variableKey, binding.variableScope));
-    return uniqueIds([...metadataIds, ...variableIds]);
+    const mvuIds = readMvuAchievementIds(binding);
+    return uniqueIds([...metadataIds, ...variableIds, ...mvuIds]);
 }
 
 function persistUnlockedIds(context, binding, unlockedIds) {
@@ -152,9 +218,19 @@ function getFrameApi() {
     return state.ui.frame.contentWindow.AlbumFrame ?? null;
 }
 
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+}
+
 function setButtonVisible(visible) {
     createUi();
     state.ui.root.classList.toggle('is-hidden', !visible);
+    renderSettingsState();
 }
 
 function setButtonActive(active) {
@@ -176,6 +252,7 @@ function hideOverlay() {
     state.ui.overlay?.classList.remove('is-visible');
     document.body.classList.remove('album-bridge-modal-open');
     setButtonActive(false);
+    renderSettingsState();
 }
 
 function syncFrameSession() {
@@ -223,9 +300,10 @@ function requestOpenAlbum(id = '') {
         return;
     }
 
-    state.pendingOpenToId = typeof id === 'string' ? id.trim() : '';
+    state.pendingOpenToId = normalizeAchievementId(id);
     showOverlay();
     flushPendingOpen();
+    renderSettingsState();
 }
 
 function requestCloseAlbum() {
@@ -236,6 +314,178 @@ function requestCloseAlbum() {
     }
 
     api.closeBook();
+    renderSettingsState();
+}
+
+function toggleSettingsDrawer(expand) {
+    const root = state.ui.settings;
+    if (!root) {
+        return;
+    }
+
+    const icon = root.querySelector('.inline-drawer-icon');
+    const content = root.querySelector('.inline-drawer-content');
+    const nextExpanded = typeof expand === 'boolean' ? expand : content.style.display === 'none';
+
+    content.style.display = nextExpanded ? 'block' : 'none';
+    icon.classList.toggle('up', nextExpanded);
+    icon.classList.toggle('fa-circle-chevron-up', nextExpanded);
+    icon.classList.toggle('down', !nextExpanded);
+    icon.classList.toggle('fa-circle-chevron-down', !nextExpanded);
+}
+
+function createSettingsPanel() {
+    if (state.ui.settings) {
+        return;
+    }
+
+    const container = document.getElementById('extensions_settings2');
+    if (!container) {
+        return;
+    }
+
+    const root = document.createElement('div');
+    root.id = 'album-bridge-settings';
+    root.className = 'inline-drawer';
+    root.innerHTML = `
+        <div class="inline-drawer-toggle inline-drawer-header">
+            <b>Album Bridge Pure</b>
+            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+        </div>
+        <div class="inline-drawer-content" style="display: none;">
+            <div class="album-bridge-settings__grid">
+                <div class="album-bridge-settings__card">
+                    <div class="album-bridge-settings__label">当前状态</div>
+                    <div class="album-bridge-settings__value" data-album-status>未检测</div>
+                </div>
+                <div class="album-bridge-settings__card">
+                    <div class="album-bridge-settings__label">当前角色</div>
+                    <div class="album-bridge-settings__value" data-album-character>未选择</div>
+                </div>
+                <div class="album-bridge-settings__card">
+                    <div class="album-bridge-settings__label">角色卡 bind_id</div>
+                    <div class="album-bridge-settings__value album-bridge-settings__mono" data-album-bind>未设置</div>
+                </div>
+                <div class="album-bridge-settings__card">
+                    <div class="album-bridge-settings__label">要求 bind_id</div>
+                    <div class="album-bridge-settings__value album-bridge-settings__mono">${EXPECTED_BIND_ID}</div>
+                </div>
+                <div class="album-bridge-settings__card">
+                    <div class="album-bridge-settings__label">已解锁数量</div>
+                    <div class="album-bridge-settings__value" data-album-count>0</div>
+                </div>
+                <div class="album-bridge-settings__card">
+                    <div class="album-bridge-settings__label">相册窗口</div>
+                    <div class="album-bridge-settings__value" data-album-overlay>未打开</div>
+                </div>
+            </div>
+            <div class="album-bridge-settings__section">
+                <div class="album-bridge-settings__row">
+                    <div class="album-bridge-settings__label">解锁列表变量</div>
+                    <div class="album-bridge-settings__value album-bridge-settings__mono" data-album-variable>${DEFAULT_VARIABLE_KEY}</div>
+                </div>
+                <div class="album-bridge-settings__row">
+                    <div class="album-bridge-settings__label">触发队列变量</div>
+                    <div class="album-bridge-settings__value album-bridge-settings__mono" data-album-trigger>${DEFAULT_TRIGGER_KEY}</div>
+                </div>
+                <div class="album-bridge-settings__row">
+                    <div class="album-bridge-settings__label">MVU 成就源</div>
+                    <div class="album-bridge-settings__value album-bridge-settings__mono" data-album-mvu>未启用</div>
+                </div>
+            </div>
+            <div class="album-bridge-settings__actions">
+                <button type="button" class="menu_button" data-album-action="refresh">刷新识别</button>
+                <button type="button" class="menu_button" data-album-action="open">测试打开相册</button>
+                <button type="button" class="menu_button" data-album-action="copy">复制角色卡字段</button>
+            </div>
+            <div class="album-bridge-settings__hint">
+                下方是完整 Tavern Card V2 路径示例；关键位置是 `data.extensions.album_book`。
+            </div>
+            <textarea class="text_pole autoSetHeight album-bridge-settings__json" rows="9" readonly data-album-json></textarea>
+        </div>
+    `;
+
+    root.querySelector('.inline-drawer-toggle').addEventListener('click', () => toggleSettingsDrawer());
+    root.querySelector('[data-album-action="refresh"]').addEventListener('click', () => refreshBinding());
+    root.querySelector('[data-album-action="open"]').addEventListener('click', () => requestOpenAlbum());
+    root.querySelector('[data-album-action="copy"]').addEventListener('click', async () => {
+        const textarea = root.querySelector('[data-album-json]');
+        const text = textarea?.value || '';
+        if (!text) {
+            return;
+        }
+
+        try {
+            await navigator.clipboard.writeText(text);
+        } catch {
+            textarea.select();
+            document.execCommand('copy');
+        }
+    });
+
+    container.appendChild(root);
+    state.ui.settings = root;
+    renderSettingsState();
+}
+
+function renderSettingsState() {
+    const root = state.ui.settings;
+    if (!root) {
+        return;
+    }
+
+    const binding = state.binding;
+    const matches = Boolean(binding?.matches);
+    const isOpen = Boolean(state.ui.overlay?.classList.contains('is-visible'));
+    const status = !binding
+        ? '未检测'
+        : matches
+            ? '已识别到绑定角色卡'
+            : '未匹配到绑定角色卡';
+
+    const statusEl = root.querySelector('[data-album-status]');
+    const characterEl = root.querySelector('[data-album-character]');
+    const bindEl = root.querySelector('[data-album-bind]');
+    const countEl = root.querySelector('[data-album-count]');
+    const overlayEl = root.querySelector('[data-album-overlay]');
+    const variableEl = root.querySelector('[data-album-variable]');
+    const triggerEl = root.querySelector('[data-album-trigger]');
+    const mvuEl = root.querySelector('[data-album-mvu]');
+    const jsonEl = root.querySelector('[data-album-json]');
+    const openButton = root.querySelector('[data-album-action="open"]');
+
+    statusEl.textContent = status;
+    statusEl.classList.toggle('success', matches);
+    statusEl.classList.toggle('warning', Boolean(binding && !matches));
+    characterEl.textContent = binding?.characterName || '未选择';
+    bindEl.textContent = binding?.bindId || '未设置';
+    countEl.textContent = String(state.unlockedIds.length);
+    overlayEl.textContent = isOpen ? '已打开' : '未打开';
+    variableEl.textContent = binding?.variableKey || DEFAULT_VARIABLE_KEY;
+    triggerEl.textContent = binding?.triggerKey || DEFAULT_TRIGGER_KEY;
+    mvuEl.textContent = binding?.readMvuAchievements ? binding.mvuPath : '未启用';
+    openButton.disabled = !matches;
+
+    const json = {
+        data: {
+            extensions: {
+                album_book: {
+                    bind_id: EXPECTED_BIND_ID,
+                    profile: DEFAULT_PROFILE,
+                    version: 1,
+                    variable_key: binding?.variableKey || DEFAULT_VARIABLE_KEY,
+                    variable_scope: binding?.variableScope || DEFAULT_VARIABLE_SCOPE,
+                    trigger_key: binding?.triggerKey || DEFAULT_TRIGGER_KEY,
+                    trigger_scope: binding?.triggerScope || DEFAULT_TRIGGER_SCOPE,
+                    clear_trigger_on_read: binding?.clearTriggerOnRead ?? true,
+                    read_mvu_achievements: binding?.readMvuAchievements ?? true,
+                    mvu_path: binding?.mvuPath || DEFAULT_MVU_PATH,
+                },
+            },
+        },
+    };
+
+    jsonEl.value = JSON.stringify(json, null, 2);
 }
 
 function createUi() {
@@ -320,12 +570,15 @@ function syncFrameUnlocked(unlockedIds, unlockId = '') {
         return;
     }
 
-    if (unlockId) {
-        api.unlock(unlockId, unlockedIds);
+    const normalizedIds = uniqueIds(unlockedIds);
+    const normalizedUnlockId = normalizeAchievementId(unlockId);
+
+    if (normalizedUnlockId) {
+        api.unlock(normalizedUnlockId, normalizedIds);
         return;
     }
 
-    api.syncUnlocked(unlockedIds);
+    api.syncUnlocked(normalizedIds);
 }
 
 function pollExternalState() {
@@ -334,8 +587,7 @@ function pollExternalState() {
     }
 
     const context = getContext();
-    const unlockedRaw = readScopedVariable(context, state.binding.variableKey, state.binding.variableScope);
-    const unlockedIds = parseUnlockedIds(unlockedRaw);
+    const unlockedIds = getUnlockedIds(context, state.binding);
     const unlockedSignature = JSON.stringify(unlockedIds);
 
     if (unlockedSignature !== state.lastObservedUnlockedValue) {
@@ -384,6 +636,7 @@ function startVariableWatch() {
 }
 
 function refreshBinding() {
+    createSettingsPanel();
     const context = getContext();
     const character = getCurrentCharacter(context);
     const binding = getBindingFromCharacter(character);
@@ -396,6 +649,7 @@ function refreshBinding() {
         stopVariableWatch();
         getFrameApi()?.hibernate?.();
         hideOverlay();
+        renderSettingsState();
         return;
     }
 
@@ -404,30 +658,31 @@ function refreshBinding() {
     state.lastObservedTriggerValue = '';
     syncFrameSession();
     startVariableWatch();
+    renderSettingsState();
 }
 
 function unlock(id) {
-    if (!state.binding?.matches || typeof id !== 'string' || !id.trim()) {
+    const normalizedId = normalizeAchievementId(id);
+    if (!state.binding?.matches || !normalizedId) {
         return;
     }
 
     const context = getContext();
-    const trimmed = id.trim();
-    const nextIds = uniqueIds([...state.unlockedIds, trimmed]);
+    const nextIds = uniqueIds([...state.unlockedIds, normalizedId]);
     persistUnlockedIds(context, state.binding, nextIds);
-    syncFrameUnlocked(nextIds, trimmed);
+    syncFrameUnlocked(nextIds, normalizedId);
 }
 
 function lock(id) {
-    if (!state.binding?.matches || typeof id !== 'string' || !id.trim()) {
+    const normalizedId = normalizeAchievementId(id);
+    if (!state.binding?.matches || !normalizedId) {
         return;
     }
 
     const context = getContext();
-    const trimmed = id.trim();
-    const nextIds = state.unlockedIds.filter(item => item !== trimmed);
+    const nextIds = state.unlockedIds.filter(item => item !== normalizedId);
     persistUnlockedIds(context, state.binding, nextIds);
-    getFrameApi()?.lock?.(trimmed, nextIds);
+    getFrameApi()?.lock?.(normalizedId, nextIds);
 }
 
 function syncUnlocked(ids) {
@@ -475,6 +730,7 @@ function bindContextEvents() {
 
 function boot() {
     createUi();
+    createSettingsPanel();
     bindRuntimeApi();
     bindContextEvents();
     refreshBinding();
