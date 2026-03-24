@@ -1,4 +1,6 @@
-import { getContext } from '../../../st-context.js';
+function getContext() {
+    return globalThis.SillyTavern?.getContext?.() ?? null;
+}
 
 const EXPECTED_BIND_ID = 'luochaoxi_private_album_v1';
 const DEFAULT_PROFILE = 'pure-plugin-flagship';
@@ -50,6 +52,36 @@ function uniqueIds(values) {
     )];
 }
 
+function waitForElement(selector, timeout = 10000) {
+    const existing = document.querySelector(selector);
+    if (existing) {
+        return Promise.resolve(existing);
+    }
+
+    return new Promise(resolve => {
+        const timer = window.setTimeout(() => {
+            observer.disconnect();
+            resolve(null);
+        }, timeout);
+
+        const observer = new MutationObserver(() => {
+            const node = document.querySelector(selector);
+            if (!node) {
+                return;
+            }
+
+            window.clearTimeout(timer);
+            observer.disconnect();
+            resolve(node);
+        });
+
+        observer.observe(document.documentElement, {
+            childList: true,
+            subtree: true,
+        });
+    });
+}
+
 function parseUnlockedIds(value) {
     if (Array.isArray(value)) {
         return uniqueIds(value);
@@ -84,12 +116,27 @@ function parseAchievementIdsFromText(value) {
     return uniqueIds(matches);
 }
 
-function getCurrentCharacter(context) {
+async function getCurrentCharacter(context) {
     if (context.characterId === undefined || context.characterId === null || context.characterId < 0) {
         return null;
     }
 
-    return context.characters?.[context.characterId] ?? context.getOneCharacter?.(context.characterId) ?? null;
+    let character = context.characters?.[context.characterId] ?? null;
+    if (character?.data?.extensions?.album_book) {
+        return character;
+    }
+
+    const avatarUrl = character?.avatar;
+    if (avatarUrl && typeof context.getOneCharacter === 'function') {
+        try {
+            await context.getOneCharacter(avatarUrl);
+            character = context.characters?.[context.characterId] ?? character;
+        } catch (error) {
+            console.warn('[Album Bridge Pure] Failed to hydrate character:', error);
+        }
+    }
+
+    return character;
 }
 
 function getBindingFromCharacter(character) {
@@ -229,6 +276,10 @@ function escapeHtml(value) {
 
 function setButtonVisible(visible) {
     createUi();
+    if (!state.ui.root) {
+        return;
+    }
+
     state.ui.root.classList.toggle('is-hidden', !visible);
     renderSettingsState();
 }
@@ -271,7 +322,22 @@ function syncFrameSession() {
         version: state.binding.version,
         characterName: state.binding.characterName,
         unlockedIds: state.unlockedIds,
+        launcherRect: getLauncherRect(),
     });
+}
+
+function getLauncherRect() {
+    if (!state.ui.button?.isConnected) {
+        return null;
+    }
+
+    const rect = state.ui.button.getBoundingClientRect();
+    return {
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height,
+    };
 }
 
 function flushPendingOpen() {
@@ -317,111 +383,31 @@ function requestCloseAlbum() {
     renderSettingsState();
 }
 
-function toggleSettingsDrawer(expand) {
-    const root = state.ui.settings;
-    if (!root) {
+async function createSettingsPanel() {
+    if (state.ui.settings?.isConnected) {
         return;
     }
 
-    const icon = root.querySelector('.inline-drawer-icon');
-    const content = root.querySelector('.inline-drawer-content');
-    const nextExpanded = typeof expand === 'boolean' ? expand : content.style.display === 'none';
+    state.ui.settings = null;
 
-    content.style.display = nextExpanded ? 'block' : 'none';
-    icon.classList.toggle('up', nextExpanded);
-    icon.classList.toggle('fa-circle-chevron-up', nextExpanded);
-    icon.classList.toggle('down', !nextExpanded);
-    icon.classList.toggle('fa-circle-chevron-down', !nextExpanded);
-}
+    const container = document.getElementById('extensions_settings2')
+        ?? document.getElementById('extensions_settings')
+        ?? await waitForElement('#extensions_settings2')
+        ?? await waitForElement('#extensions_settings');
 
-function createSettingsPanel() {
-    if (state.ui.settings) {
-        return;
-    }
-
-    const container = document.getElementById('extensions_settings2');
     if (!container) {
         return;
     }
 
     const root = document.createElement('div');
-    root.id = 'album-bridge-settings';
-    root.className = 'inline-drawer';
+    root.id = 'album-bridge-status';
     root.innerHTML = `
-        <div class="inline-drawer-toggle inline-drawer-header">
-            <b>Album Bridge Pure</b>
-            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
-        </div>
-        <div class="inline-drawer-content" style="display: none;">
-            <div class="album-bridge-settings__grid">
-                <div class="album-bridge-settings__card">
-                    <div class="album-bridge-settings__label">当前状态</div>
-                    <div class="album-bridge-settings__value" data-album-status>未检测</div>
-                </div>
-                <div class="album-bridge-settings__card">
-                    <div class="album-bridge-settings__label">当前角色</div>
-                    <div class="album-bridge-settings__value" data-album-character>未选择</div>
-                </div>
-                <div class="album-bridge-settings__card">
-                    <div class="album-bridge-settings__label">角色卡 bind_id</div>
-                    <div class="album-bridge-settings__value album-bridge-settings__mono" data-album-bind>未设置</div>
-                </div>
-                <div class="album-bridge-settings__card">
-                    <div class="album-bridge-settings__label">要求 bind_id</div>
-                    <div class="album-bridge-settings__value album-bridge-settings__mono">${EXPECTED_BIND_ID}</div>
-                </div>
-                <div class="album-bridge-settings__card">
-                    <div class="album-bridge-settings__label">已解锁数量</div>
-                    <div class="album-bridge-settings__value" data-album-count>0</div>
-                </div>
-                <div class="album-bridge-settings__card">
-                    <div class="album-bridge-settings__label">相册窗口</div>
-                    <div class="album-bridge-settings__value" data-album-overlay>未打开</div>
-                </div>
-            </div>
-            <div class="album-bridge-settings__section">
-                <div class="album-bridge-settings__row">
-                    <div class="album-bridge-settings__label">解锁列表变量</div>
-                    <div class="album-bridge-settings__value album-bridge-settings__mono" data-album-variable>${DEFAULT_VARIABLE_KEY}</div>
-                </div>
-                <div class="album-bridge-settings__row">
-                    <div class="album-bridge-settings__label">触发队列变量</div>
-                    <div class="album-bridge-settings__value album-bridge-settings__mono" data-album-trigger>${DEFAULT_TRIGGER_KEY}</div>
-                </div>
-                <div class="album-bridge-settings__row">
-                    <div class="album-bridge-settings__label">MVU 成就源</div>
-                    <div class="album-bridge-settings__value album-bridge-settings__mono" data-album-mvu>未启用</div>
-                </div>
-            </div>
-            <div class="album-bridge-settings__actions">
-                <button type="button" class="menu_button" data-album-action="refresh">刷新识别</button>
-                <button type="button" class="menu_button" data-album-action="open">测试打开相册</button>
-                <button type="button" class="menu_button" data-album-action="copy">复制角色卡字段</button>
-            </div>
-            <div class="album-bridge-settings__hint">
-                下方是完整 Tavern Card V2 路径示例；关键位置是 `data.extensions.album_book`。
-            </div>
-            <textarea class="text_pole autoSetHeight album-bridge-settings__json" rows="9" readonly data-album-json></textarea>
+        <div class="album-bridge-status__title">Album Bridge Pure</div>
+        <div class="album-bridge-status__badge" data-album-badge>未识别</div>
+        <div class="album-bridge-status__text" data-album-status>
+            当前未识别到绑定角色卡。
         </div>
     `;
-
-    root.querySelector('.inline-drawer-toggle').addEventListener('click', () => toggleSettingsDrawer());
-    root.querySelector('[data-album-action="refresh"]').addEventListener('click', () => refreshBinding());
-    root.querySelector('[data-album-action="open"]').addEventListener('click', () => requestOpenAlbum());
-    root.querySelector('[data-album-action="copy"]').addEventListener('click', async () => {
-        const textarea = root.querySelector('[data-album-json]');
-        const text = textarea?.value || '';
-        if (!text) {
-            return;
-        }
-
-        try {
-            await navigator.clipboard.writeText(text);
-        } catch {
-            textarea.select();
-            document.execCommand('copy');
-        }
-    });
 
     container.appendChild(root);
     state.ui.settings = root;
@@ -430,68 +416,38 @@ function createSettingsPanel() {
 
 function renderSettingsState() {
     const root = state.ui.settings;
-    if (!root) {
+    if (!root?.isConnected) {
         return;
     }
 
     const binding = state.binding;
     const matches = Boolean(binding?.matches);
-    const isOpen = Boolean(state.ui.overlay?.classList.contains('is-visible'));
-    const status = !binding
-        ? '未检测'
-        : matches
-            ? '已识别到绑定角色卡'
-            : '未匹配到绑定角色卡';
-
+    const badgeEl = root.querySelector('[data-album-badge]');
     const statusEl = root.querySelector('[data-album-status]');
-    const characterEl = root.querySelector('[data-album-character]');
-    const bindEl = root.querySelector('[data-album-bind]');
-    const countEl = root.querySelector('[data-album-count]');
-    const overlayEl = root.querySelector('[data-album-overlay]');
-    const variableEl = root.querySelector('[data-album-variable]');
-    const triggerEl = root.querySelector('[data-album-trigger]');
-    const mvuEl = root.querySelector('[data-album-mvu]');
-    const jsonEl = root.querySelector('[data-album-json]');
-    const openButton = root.querySelector('[data-album-action="open"]');
 
-    statusEl.textContent = status;
-    statusEl.classList.toggle('success', matches);
-    statusEl.classList.toggle('warning', Boolean(binding && !matches));
-    characterEl.textContent = binding?.characterName || '未选择';
-    bindEl.textContent = binding?.bindId || '未设置';
-    countEl.textContent = String(state.unlockedIds.length);
-    overlayEl.textContent = isOpen ? '已打开' : '未打开';
-    variableEl.textContent = binding?.variableKey || DEFAULT_VARIABLE_KEY;
-    triggerEl.textContent = binding?.triggerKey || DEFAULT_TRIGGER_KEY;
-    mvuEl.textContent = binding?.readMvuAchievements ? binding.mvuPath : '未启用';
-    openButton.disabled = !matches;
+    badgeEl.textContent = matches ? '已识别' : '未识别';
+    badgeEl.classList.toggle('is-success', matches);
+    badgeEl.classList.toggle('is-warning', !matches);
 
-    const json = {
-        data: {
-            extensions: {
-                album_book: {
-                    bind_id: EXPECTED_BIND_ID,
-                    profile: DEFAULT_PROFILE,
-                    version: 1,
-                    variable_key: binding?.variableKey || DEFAULT_VARIABLE_KEY,
-                    variable_scope: binding?.variableScope || DEFAULT_VARIABLE_SCOPE,
-                    trigger_key: binding?.triggerKey || DEFAULT_TRIGGER_KEY,
-                    trigger_scope: binding?.triggerScope || DEFAULT_TRIGGER_SCOPE,
-                    clear_trigger_on_read: binding?.clearTriggerOnRead ?? true,
-                    read_mvu_achievements: binding?.readMvuAchievements ?? true,
-                    mvu_path: binding?.mvuPath || DEFAULT_MVU_PATH,
-                },
-            },
-        },
-    };
-
-    jsonEl.value = JSON.stringify(json, null, 2);
+    if (matches) {
+        statusEl.textContent = `已识别到绑定角色卡：${binding.characterName || '未命名角色'}。`;
+    } else if (binding?.bindId) {
+        statusEl.textContent = `当前角色卡 bind_id 为 ${binding.bindId}，与要求的 ${EXPECTED_BIND_ID} 不匹配。`;
+    } else {
+        statusEl.textContent = '当前未识别到绑定角色卡。';
+    }
 }
 
 function createUi() {
-    if (state.ui.root) {
+    if (state.ui.root?.isConnected && state.ui.overlay?.isConnected) {
         return;
     }
+
+    state.ui.root = null;
+    state.ui.button = null;
+    state.ui.overlay = null;
+    state.ui.frame = null;
+    state.ui.backdrop = null;
 
     const root = document.createElement('div');
     root.id = 'album-bridge-anchor';
@@ -502,12 +458,13 @@ function createUi() {
     button.className = 'album-bridge-book';
     button.setAttribute('aria-label', 'Open achievement album');
     button.innerHTML = `
-        <span class="album-bridge-book__shadow"></span>
-        <span class="album-bridge-book__body"></span>
-        <span class="album-bridge-book__edge"></span>
-        <span class="album-bridge-book__clasp"></span>
-        <span class="album-bridge-book__shine"></span>
-        <span class="album-bridge-book__label">Archive</span>
+        <span class="album-bridge-book__drop"></span>
+        <span class="album-bridge-book__spine"></span>
+        <span class="album-bridge-book__cover"></span>
+        <span class="album-bridge-book__paper"></span>
+        <span class="album-bridge-book__strap"></span>
+        <span class="album-bridge-book__foil">CHRONICLE</span>
+        <span class="album-bridge-book__gloss"></span>
     `;
 
     button.addEventListener('click', () => {
@@ -635,10 +592,14 @@ function startVariableWatch() {
     state.variableWatchTimer = window.setInterval(pollExternalState, VARIABLE_POLL_MS);
 }
 
-function refreshBinding() {
+async function refreshBinding() {
     createSettingsPanel();
     const context = getContext();
-    const character = getCurrentCharacter(context);
+    if (!context) {
+        renderSettingsState();
+        return;
+    }
+    const character = await getCurrentCharacter(context);
     const binding = getBindingFromCharacter(character);
     state.binding = binding;
 
@@ -721,7 +682,11 @@ function bindRuntimeApi() {
 
 function bindContextEvents() {
     const context = getContext();
-    const refresh = () => refreshBinding();
+    if (!context?.eventSource || !context?.eventTypes) {
+        return;
+    }
+
+    const refresh = () => void refreshBinding();
 
     context.eventSource.on(context.eventTypes.APP_READY, refresh);
     context.eventSource.on(context.eventTypes.CHAT_CHANGED, refresh);
@@ -729,11 +694,15 @@ function bindContextEvents() {
 }
 
 function boot() {
-    createUi();
-    createSettingsPanel();
-    bindRuntimeApi();
-    bindContextEvents();
-    refreshBinding();
+    try {
+        createUi();
+        createSettingsPanel();
+        bindRuntimeApi();
+        bindContextEvents();
+        void refreshBinding();
+    } catch (error) {
+        console.error('[Album Bridge Pure] Boot failed:', error);
+    }
 }
 
 if (document.readyState === 'loading') {

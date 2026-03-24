@@ -1,20 +1,4 @@
-export const ASSET_MANIFEST = {
-    //
-    // 预留接口：
-    //
-    // RE_001: {
-    //     thumb: '../assets/achievements/RE_001-thumb.webp',
-    //     full: '../assets/achievements/RE_001.webp',
-    //     fit: 'cover',
-    //     placeholder: 'memory',
-    // },
-    //
-    // 说明：
-    // - `thumb`：卡面小图
-    // - `full`：后续详情页大图
-    // - 路径既可以是相对 `album-frame.html` 的路径，也可以是绝对 `file:///` / `https://` 地址
-    // - 以后如果你想做“压缩包导入”，只要把压缩包解到本地目录，再把路径写进这里即可
-};
+import { ASSET_CODE_TABLE } from './asset-manifest.generated.js';
 
 function normalizeAchievementId(value) {
     if (typeof value !== 'string') {
@@ -29,6 +13,43 @@ function normalizeAchievementId(value) {
 
     return `${match[1]}_${match[2]}`;
 }
+
+function deriveFilename(id) {
+    const normalizedId = normalizeAchievementId(id);
+    if (!normalizedId) {
+        return '';
+    }
+
+    const [prefix, sequence] = normalizedId.split('_');
+    return `${prefix}${Number(sequence)}.png`;
+}
+
+function buildAssetManifest() {
+    const entries = ASSET_CODE_TABLE
+        .trim()
+        .split('\n')
+        .map(line => line.trim())
+        .filter(Boolean)
+        .map(line => {
+            const [id, code, customFilename] = line.split(/\s+/);
+            const normalizedId = normalizeAchievementId(id);
+            const filename = customFilename || deriveFilename(normalizedId);
+            const url = `https://i.postimg.cc/${code}/${filename}`;
+
+            return [
+                normalizedId,
+                {
+                    thumb: url,
+                    full: url,
+                    fit: 'cover',
+                },
+            ];
+        });
+
+    return Object.fromEntries(entries);
+}
+
+export const ASSET_MANIFEST = buildAssetManifest();
 
 export function getAchievementAsset(id) {
     const normalizedId = normalizeAchievementId(id);
