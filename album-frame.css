@@ -136,7 +136,8 @@ body {
     transform: translate(-50%, -50%);
     opacity: var(--closed-alpha);
     transition: opacity 220ms ease;
-    pointer-events: none;
+    pointer-events: auto;
+    cursor: pointer;
 }
 
 .album-closed-book__drop,

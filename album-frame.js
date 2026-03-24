@@ -1271,6 +1271,12 @@ function handleResize() {
 }
 
 function bindEvents() {
+    dom.closedBook.addEventListener('click', () => {
+        if (runtime.phase === 'closed') {
+            void openBook();
+        }
+    });
+
     dom.chapterRail.addEventListener('click', handleChapterRailClick);
 
     dom.pageViewport.addEventListener('pointerdown', handleTurnPointerDown);
