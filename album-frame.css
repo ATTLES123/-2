@@ -327,11 +327,11 @@ body {
     height: 86.4%;
     border-radius: 42px 24px 24px 42px;
     background:
-        radial-gradient(circle at 20% 14%, rgba(255, 237, 208, 0.07), rgba(255, 237, 208, 0) 24%),
-        linear-gradient(180deg, rgba(106, 66, 45, 0.28), rgba(35, 20, 16, 0.3));
+        radial-gradient(circle at 20% 14%, rgba(255, 237, 208, 0.1), rgba(255, 237, 208, 0) 24%),
+        linear-gradient(180deg, rgba(92, 58, 40, 0.3), rgba(42, 24, 18, 0.34));
     box-shadow:
-        inset 0 0 0 1px rgba(255, 235, 210, 0.05),
-        inset 0 0 30px rgba(0, 0, 0, 0.18);
+        inset 0 0 0 1px rgba(255, 235, 210, 0.06),
+        inset 0 0 30px rgba(0, 0, 0, 0.14);
 }
 
 .album-rig__underlay::after {
@@ -405,16 +405,18 @@ body {
 }
 
 .album-rig__stack--left::after {
-    inset: 4% auto 4% 0;
+    inset: 4% 0 4% auto;
     width: 22px;
-    border-radius: 18px;
+    border-radius: 4px 18px 18px 4px;
     background:
         repeating-linear-gradient(
             180deg,
             rgba(255, 248, 236, 0.96) 0 3px,
             rgba(232, 219, 201, 0.96) 3px 6px
         );
-    box-shadow: inset -1px 0 0 rgba(109, 83, 58, 0.1);
+    box-shadow:
+        inset 1px 0 0 rgba(255, 255, 255, 0.54),
+        inset -1px 0 0 rgba(109, 83, 58, 0.1);
 }
 
 .album-rig__stack--right::before {
@@ -775,11 +777,11 @@ body {
     top: 6.8%;
     width: 47.4%;
     height: 86.4%;
-    transform-origin: 98% center;
+    transform-origin: 100% center;
     transform-style: preserve-3d;
     transform:
-        translate3d(calc(var(--cover-open) * -18px), var(--cover-lift), calc(var(--page-depth) + 22px))
-        rotateY(calc(-158deg * var(--cover-open)))
+        translate3d(calc((1 - var(--cover-open)) * 16px), var(--cover-lift), calc(var(--page-depth) + 22px))
+        rotateY(calc(158deg * (1 - var(--cover-open))))
         rotateZ(var(--cover-twist));
     pointer-events: auto;
     z-index: 22;
@@ -810,16 +812,16 @@ body {
 }
 
 .album-cover::after {
-    right: -12px;
-    width: 22px;
+    right: -7px;
+    width: 12px;
     border-radius: 999px;
     background:
-        linear-gradient(180deg, rgba(255, 235, 202, 0.12), rgba(255, 235, 202, 0)),
-        linear-gradient(90deg, rgba(0, 0, 0, 0.2), rgba(72, 38, 26, 0.82) 38%, rgba(20, 8, 6, 0.96) 100%);
-    transform: translateZ(-8px) rotateY(90deg);
-    opacity: calc(0.12 + var(--hinge-shadow) * 0.9);
+        linear-gradient(180deg, rgba(255, 235, 202, 0.08), rgba(255, 235, 202, 0)),
+        linear-gradient(90deg, rgba(36, 17, 11, 0.14), rgba(70, 36, 24, 0.66) 42%, rgba(18, 8, 6, 0.84) 100%);
+    transform: translateZ(-4px) rotateY(90deg);
+    opacity: calc(0.04 + (1 - var(--cover-open)) * 0.28 + var(--hinge-shadow) * 0.18);
     box-shadow:
-        0 0 16px rgba(0, 0, 0, 0.14),
+        0 0 10px rgba(0, 0, 0, 0.12),
         inset 1px 0 0 rgba(255, 228, 192, 0.04);
 }
 
@@ -828,10 +830,13 @@ body {
     inset: 0;
     border-radius: 42px 24px 24px 42px;
     backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
     overflow: hidden;
+    transform-style: preserve-3d;
 }
 
 .album-cover__face--front {
+    transform: rotateY(180deg) translateZ(1px);
     background:
         radial-gradient(circle at 18% 14%, rgba(255, 246, 226, 0.2), rgba(255, 246, 226, 0) 20%),
         linear-gradient(135deg, rgba(255, 236, 214, 0.16), rgba(255, 236, 214, 0) 18%),
@@ -884,6 +889,8 @@ body {
     box-shadow:
         inset 0 0 0 1px rgba(226, 182, 109, 0.18),
         0 0 24px rgba(226, 182, 109, 0.08);
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
 }
 
 .album-cover__title {
@@ -896,6 +903,8 @@ body {
     font-size: clamp(30px, 2.2vw, 40px);
     text-transform: uppercase;
     text-shadow: 0 1px 0 rgba(68, 34, 18, 0.42);
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
 }
 
 .album-cover__subtitle {
@@ -907,6 +916,8 @@ body {
     letter-spacing: 0.22em;
     text-transform: uppercase;
     font-size: 13px;
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
 }
 
 .album-cover__strap {
@@ -922,10 +933,12 @@ body {
     box-shadow:
         inset 0 1px 0 rgba(255, 255, 255, 0.56),
         0 12px 18px rgba(0, 0, 0, 0.18);
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
 }
 
 .album-cover__face--back {
-    transform: rotateY(180deg);
+    transform: translateZ(1px);
     background:
         linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.02)),
         linear-gradient(180deg, #f0e5d3, #e2d1b9 64%, #d4bc98);
@@ -1166,7 +1179,7 @@ body {
     top: 8.2%;
     width: 44.2%;
     height: 82.4%;
-    z-index: 20;
+    z-index: 24;
     opacity: 0;
     pointer-events: none;
     transform-style: preserve-3d;
@@ -1181,8 +1194,8 @@ body {
     position: absolute;
     top: 0;
     bottom: 0;
-    width: calc(100% / var(--turn-strips));
-    left: calc(var(--strip-index) * 100% / var(--turn-strips));
+    width: calc((100% / var(--turn-strips)) + 0.8px);
+    left: calc((var(--strip-index) * 100% / var(--turn-strips)) - 0.4px);
     transform-style: preserve-3d;
     transform-origin: left center;
     will-change: transform;
@@ -1285,10 +1298,10 @@ body {
     position: absolute;
     top: 0;
     bottom: 0;
-    right: -0.5px;
-    width: 1px;
+    right: -0.25px;
+    width: 0.5px;
     background: linear-gradient(180deg, rgba(156, 120, 78, 0), rgba(156, 120, 78, 0.22) 16%, rgba(156, 120, 78, 0.22) 84%, rgba(156, 120, 78, 0));
-    opacity: 0.56;
+    opacity: 0.16;
     pointer-events: none;
 }
 

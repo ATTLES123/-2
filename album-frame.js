@@ -980,7 +980,7 @@ function prepareTurn(direction) {
     runtime.turn.direction = direction;
     runtime.turn.fromIndex = runtime.currentPageIndex;
     runtime.turn.toIndex = toIndex;
-    runtime.turn.progress = 0;
+    runtime.turn.progress = 0.018;
     runtime.turn.gripY = 0.5;
     runtime.phase = 'dragging';
 
@@ -1223,7 +1223,7 @@ function updateTurnProgressFromPointer(event) {
     const delta = direction === 1
         ? (runtime.turn.startX - event.clientX)
         : (event.clientX - runtime.turn.startX);
-    const progress = clamp(delta / Math.max(bounds.width * 0.76, 220), 0, 1);
+    const progress = clamp(delta / Math.max(bounds.width * 0.62, 180), 0, 1);
 
     runtime.turn.progress = progress;
     runtime.turn.gripY = clamp((event.clientY - bounds.top) / bounds.height, 0.08, 0.92);
@@ -1265,6 +1265,7 @@ function handleTurnPointerDown(event) {
             '[data-achievement-id], .page-sheet__focus, button, a, input, textarea, select, label',
         ),
     );
+    dom.pageViewport.setPointerCapture(event.pointerId);
 }
 
 function handleTurnPointerMove(event) {
@@ -1281,9 +1282,9 @@ function handleTurnPointerMove(event) {
         const deltaY = event.clientY - runtime.turn.startY;
         const absX = Math.abs(deltaX);
         const absY = Math.abs(deltaY);
-        const threshold = runtime.turn.downInteractive ? 18 : 10;
+        const threshold = runtime.turn.downInteractive ? 14 : 7;
 
-        if (absX < threshold || absX < absY * 1.08) {
+        if (absX < threshold || absX < absY * 0.78) {
             return;
         }
 
@@ -1322,6 +1323,7 @@ async function handleTurnPointerUp(event) {
     }
 
     if (!runtime.turn.active) {
+        releaseTurn(event.pointerId);
         runtime.turn.armed = false;
         runtime.turn.pointerId = null;
         runtime.turn.downInteractive = false;
@@ -1336,7 +1338,7 @@ async function handleTurnPointerUp(event) {
         runtime.turn.progress = 0.56;
     }
 
-    if (runtime.turn.progress >= 0.42) {
+    if (runtime.turn.progress >= 0.26) {
         await commitTurn();
         return;
     }
@@ -1350,6 +1352,7 @@ function handleTurnPointerCancel(event) {
     }
 
     if (!runtime.turn.active) {
+        releaseTurn(event.pointerId);
         runtime.turn.armed = false;
         runtime.turn.pointerId = null;
         runtime.turn.downInteractive = false;
