@@ -6,7 +6,7 @@ import {
 import { getAchievementAsset } from './data/asset-manifest.js';
 
 const PAGE_SIZE = 4;
-const TURN_STRIP_COUNT = 24;
+const TURN_STRIP_COUNT = 48;
 
 const OPEN_SUMMON_MS = 520;
 const OPEN_MORPH_MS = 380;
@@ -27,6 +27,8 @@ const dom = {
     scene: document.getElementById('scene'),
     closedBook: document.getElementById('closedBook'),
     rig: document.getElementById('rig'),
+    leftPageViewport: document.getElementById('leftPageViewport'),
+    leftPageSheet: document.getElementById('leftPageSheet'),
     pageViewport: document.getElementById('pageViewport'),
     pageSheet: document.getElementById('pageSheet'),
     pageTurner: document.getElementById('pageTurner'),
@@ -50,8 +52,10 @@ const runtime = {
     },
     unlocked: new Set(),
     pages: [],
+    spreads: [],
     pageIndexByAchievement: new Map(),
     firstPageByChapter: new Map(),
+    currentSpreadIndex: 0,
     currentPageIndex: 0,
     activeChapterId: CHAPTERS[0]?.id ?? '',
     selectedAchievementId: '',
@@ -71,6 +75,7 @@ const runtime = {
         fromIndex: 0,
         toIndex: 0,
         downInteractive: false,
+        surfaceSide: 'right',
     },
     closeDrag: {
         active: false,
@@ -397,12 +402,12 @@ function buildRevealPose() {
         rigLift: -4,
         rigYaw: -5.8,
         rigPitch: 6.9,
-        coverOpen: 1.024,
+        coverOpen: 0.98,
         sceneDim: 0.8,
         sceneGlow: 0.32,
         pageTilt: 0,
         pageShift: 0,
-        pageReveal: 1,
+        pageReveal: 0.92,
         pageDepth: 72,
         coverLift: -4,
         coverTwist: -0.4,
@@ -427,12 +432,12 @@ function buildReleasePose() {
         rigLift: 8,
         rigYaw: -8.2,
         rigPitch: 8.6,
-        coverOpen: 0.18,
+        coverOpen: 0.08,
         sceneDim: 0.62,
         sceneGlow: 0.22,
         pageTilt: 6,
         pageShift: 18,
-        pageReveal: 0.16,
+        pageReveal: 0.02,
         pageDepth: 58,
         coverLift: -14,
         coverTwist: -1.4,
@@ -505,9 +510,10 @@ function applyMotion() {
     style.setProperty('--hinge-shadow', motion.hingeShadow.toFixed(4));
     style.setProperty('--spine-glow', motion.spineGlow.toFixed(4));
 
+    dom.leftPageViewport.style.pointerEvents = motion.pageReveal >= 0.72 ? 'auto' : 'none';
     dom.pageViewport.style.pointerEvents = motion.pageReveal >= 0.72 ? 'auto' : 'none';
     dom.chapterRail.style.pointerEvents = motion.coverOpen >= 0.72 ? 'auto' : 'none';
-    dom.closeCorner.style.pointerEvents = motion.coverOpen >= 0.72 ? 'auto' : 'none';
+    dom.closeCorner.style.pointerEvents = motion.pageReveal >= 0.72 ? 'auto' : 'none';
     dom.closedBook?.setAttribute('aria-hidden', motion.closedAlpha <= 0.02 ? 'true' : 'false');
     dom.rig?.setAttribute('aria-hidden', motion.rigAlpha <= 0.02 ? 'true' : 'false');
 }
@@ -564,8 +570,83 @@ function buildPages() {
     runtime.firstPageByChapter = firstPageByChapter;
 }
 
+function buildSpreads() {
+    const spreads = [];
+
+    if (runtime.pages.length === 0) {
+        spreads.push({
+            key: 'spread:index',
+            left: { type: 'index' },
+            right: null,
+        });
+        runtime.spreads = spreads;
+        return;
+    }
+
+    spreads.push({
+        key: 'spread:0',
+        left: { type: 'index' },
+        right: { type: 'page', pageIndex: 0 },
+    });
+
+    for (let pageIndex = 1; pageIndex < runtime.pages.length; pageIndex += 2) {
+        spreads.push({
+            key: `spread:${spreads.length}`,
+            left: { type: 'page', pageIndex },
+            right: pageIndex + 1 < runtime.pages.length
+                ? { type: 'page', pageIndex: pageIndex + 1 }
+                : null,
+        });
+    }
+
+    runtime.spreads = spreads;
+}
+
+function getSpreadAt(index) {
+    return runtime.spreads[clamp(index, 0, Math.max(0, runtime.spreads.length - 1))] ?? null;
+}
+
+function getCurrentSpread() {
+    return getSpreadAt(runtime.currentSpreadIndex);
+}
+
+function getFacePage(face) {
+    if (!face || face.type !== 'page') {
+        return null;
+    }
+
+    return runtime.pages[face.pageIndex] ?? null;
+}
+
+function getCurrentRightPage(spread = getCurrentSpread()) {
+    return getFacePage(spread?.right ?? null);
+}
+
+function getCurrentLeftPage(spread = getCurrentSpread()) {
+    return getFacePage(spread?.left ?? null);
+}
+
+function getVisiblePages(spread = getCurrentSpread()) {
+    return [getCurrentLeftPage(spread), getCurrentRightPage(spread)].filter(Boolean);
+}
+
+function findSpreadIndexByPageIndex(pageIndex) {
+    if (!Number.isInteger(pageIndex) || pageIndex < 0) {
+        return 0;
+    }
+
+    if (pageIndex === 0) {
+        return 0;
+    }
+
+    return Math.min(
+        runtime.spreads.length - 1,
+        1 + Math.floor((pageIndex - 1) / 2),
+    );
+}
+
 function getCurrentPage() {
-    return runtime.pages[runtime.currentPageIndex] ?? runtime.pages[0] ?? null;
+    return getCurrentRightPage() ?? getCurrentLeftPage() ?? runtime.pages[0] ?? null;
 }
 
 function getPageAt(index) {
@@ -581,17 +662,20 @@ function getChapterProgress(chapterId) {
     };
 }
 
-function getSelectedAchievement(page = getCurrentPage()) {
-    if (!page || !runtime.selectedAchievementId) {
+function getSelectedAchievement(page = null) {
+    if (!runtime.selectedAchievementId) {
         return null;
     }
 
-    const achievement = page.items.find(item => item?.id === runtime.selectedAchievementId) ?? null;
-    if (!achievement || !isUnlocked(achievement.id)) {
-        return null;
+    const pages = page ? [page] : getVisiblePages();
+    for (const currentPage of pages) {
+        const achievement = currentPage?.items?.find(item => item?.id === runtime.selectedAchievementId) ?? null;
+        if (achievement && isUnlocked(achievement.id)) {
+            return achievement;
+        }
     }
 
-    return achievement;
+    return null;
 }
 
 function buildCardMarkup(meta) {
@@ -638,6 +722,32 @@ function buildCardMarkup(meta) {
     `;
 }
 
+function buildChapterButtonsMarkup() {
+    return CHAPTERS
+        .slice()
+        .sort((left, right) => (left.order ?? 0) - (right.order ?? 0))
+        .map(chapter => {
+            const progress = getChapterProgress(chapter.id);
+            const active = chapter.id === runtime.activeChapterId;
+            const trackWidth = progress.total > 0
+                ? `${((progress.unlocked / progress.total) * 100).toFixed(2)}%`
+                : '0%';
+
+            return `
+                <button type="button" class="chapter-item ${active ? 'is-active' : ''}" data-chapter-id="${escapeAttribute(chapter.id)}">
+                    <div class="chapter-item__top">
+                        <span class="chapter-item__id">${escapeHtml(chapter.id)}</span>
+                        <span class="chapter-item__count">${progress.unlocked} / ${progress.total}</span>
+                    </div>
+                    <div class="chapter-item__title">${escapeHtml(chapter.title || chapter.id)}</div>
+                    <div class="chapter-item__subtitle">${escapeHtml(chapter.subtitle || '未填写章节说明')}</div>
+                    <div class="chapter-item__track"><span style="width:${trackWidth}"></span></div>
+                </button>
+            `;
+        })
+        .join('');
+}
+
 function buildFocusMarkup(page, { forTurn = false } = {}) {
     if (forTurn) {
         return '';
@@ -663,6 +773,41 @@ function buildFocusMarkup(page, { forTurn = false } = {}) {
                 <div class="page-sheet__focus-desc">${escapeHtml(selected.desc || selected.cond || selected.keywords || '新的回忆已经被妥善收录。')}</div>
                 <div class="page-sheet__focus-meta">${escapeHtml(selected.cond || selected.chapterSubtitle || selected.chapterTitle || '点击其他相片可切换聚焦。')}</div>
             </div>
+        </section>
+    `;
+}
+
+function buildIndexSheetMarkup() {
+    const title = runtime.session.characterName
+        ? `${runtime.session.characterName} · 成就档案`
+        : '成就档案';
+    const totalUnlocked = runtime.unlocked.size;
+    const totalCount = ACHIEVEMENTS.length;
+
+    return `
+        <section class="page-sheet page-sheet--index">
+            <header class="page-sheet__header">
+                <div>
+                    <span class="page-sheet__eyebrow">Private Archive</span>
+                    <h2 class="page-sheet__title">${escapeHtml(title)}</h2>
+                    <div class="page-sheet__subtitle">章节目录与收录进度</div>
+                </div>
+            </header>
+            <div class="cover-inside__summary">
+                <div class="cover-inside__summary-item">
+                    <span>Unlocked</span>
+                    <strong>${escapeHtml(totalUnlocked)}</strong>
+                </div>
+                <div class="cover-inside__summary-item">
+                    <span>Total</span>
+                    <strong>${escapeHtml(totalCount)}</strong>
+                </div>
+            </div>
+            <div class="chapter-rail chapter-rail--page">${buildChapterButtonsMarkup()}</div>
+            <footer class="page-sheet__footer">
+                <span>Archive Index</span>
+                <span class="page-sheet__page-number">00</span>
+            </footer>
         </section>
     `;
 }
@@ -710,22 +855,54 @@ function buildPageSheetMarkup(page, { forTurn = false } = {}) {
     `;
 }
 
-function setCurrentPageIndex(index, { render = true } = {}) {
-    runtime.currentPageIndex = clamp(index, 0, Math.max(0, runtime.pages.length - 1));
-    runtime.activeChapterId = getCurrentPage()?.chapterId || runtime.activeChapterId;
-    if (!getSelectedAchievement(getCurrentPage())) {
+function buildFaceMarkup(face, { forTurn = false } = {}) {
+    if (!face) {
+        return buildPageSheetMarkup(null, { forTurn });
+    }
+
+    if (face.type === 'index') {
+        return buildIndexSheetMarkup();
+    }
+
+    return buildPageSheetMarkup(getFacePage(face), { forTurn });
+}
+
+function renderStaticSpreadFaces(leftFace, rightFace) {
+    dom.leftPageSheet.innerHTML = buildFaceMarkup(leftFace);
+    dom.pageSheet.innerHTML = buildFaceMarkup(rightFace);
+}
+
+function setCurrentSpreadIndex(index, { render = true } = {}) {
+    runtime.currentSpreadIndex = clamp(index, 0, Math.max(0, runtime.spreads.length - 1));
+    const spread = getCurrentSpread();
+    const visiblePages = getVisiblePages(spread);
+
+    runtime.currentPageIndex = spread?.right?.type === 'page'
+        ? spread.right.pageIndex
+        : (spread?.left?.type === 'page' ? spread.left.pageIndex : 0);
+    runtime.activeChapterId = visiblePages[0]?.chapterId || runtime.activeChapterId;
+
+    if (!getSelectedAchievement()) {
         runtime.selectedAchievementId = '';
     }
 
     if (render) {
-        renderStaticPage(runtime.currentPageIndex);
+        renderStaticSpread(runtime.currentSpreadIndex);
         renderInsideCover();
     }
 }
 
+function renderStaticSpread(index = runtime.currentSpreadIndex) {
+    const spread = getSpreadAt(index);
+    renderStaticSpreadFaces(spread?.left ?? null, spread?.right ?? null);
+}
+
+function setCurrentPageIndex(index, { render = true } = {}) {
+    setCurrentSpreadIndex(findSpreadIndexByPageIndex(index), { render });
+}
+
 function renderStaticPage(index = runtime.currentPageIndex) {
-    const page = getPageAt(index);
-    dom.pageSheet.innerHTML = buildPageSheetMarkup(page);
+    renderStaticSpread(findSpreadIndexByPageIndex(index));
 }
 
 function renderInsideCover() {
@@ -763,7 +940,7 @@ function renderInsideCover() {
         })
         .join('');
 
-    dom.chapterRail.innerHTML = chapterMarkup;
+    dom.chapterRail.innerHTML = buildChapterButtonsMarkup();
 }
 
 function createTurnStrips() {
@@ -903,7 +1080,11 @@ function clearTurner({ resetPose = true } = {}) {
     runtime.turn.gripY = 0.5;
     runtime.turn.direction = 1;
     runtime.turn.downInteractive = false;
+    runtime.turn.surfaceSide = 'right';
     dom.pageTurner.classList.remove('is-active');
+    dom.pageTurner.style.left = '';
+    dom.pageTurner.style.right = '';
+    dom.pageTurner.style.width = '';
 
     runtime.turnStrips.forEach(strip => {
         strip.el.style.transform = '';
@@ -951,13 +1132,26 @@ function findPageIndexByAchievement(id) {
     return runtime.pageIndexByAchievement.get(normalizedId) ?? -1;
 }
 
-function getNextPageIndex(direction) {
-    return runtime.currentPageIndex + direction;
+function configureTurnerGeometry(direction) {
+    if (direction === -1) {
+        dom.pageTurner.style.left = '4.2%';
+        dom.pageTurner.style.right = 'auto';
+        dom.pageTurner.style.width = '44.2%';
+        return;
+    }
+
+    dom.pageTurner.style.left = 'auto';
+    dom.pageTurner.style.right = '4.2%';
+    dom.pageTurner.style.width = '44.2%';
+}
+
+function getNextSpreadIndex(direction) {
+    return runtime.currentSpreadIndex + direction;
 }
 
 function hasTurnTarget(direction) {
-    const nextIndex = getNextPageIndex(direction);
-    return nextIndex >= 0 && nextIndex < runtime.pages.length;
+    const nextIndex = getNextSpreadIndex(direction);
+    return nextIndex >= 0 && nextIndex < runtime.spreads.length;
 }
 
 function prepareTurn(direction) {
@@ -969,26 +1163,36 @@ function prepareTurn(direction) {
         return false;
     }
 
-    const fromPage = getCurrentPage();
-    const toIndex = getNextPageIndex(direction);
-    const toPage = getPageAt(toIndex);
-    if (!fromPage || !toPage) {
+    const fromSpread = getCurrentSpread();
+    const toIndex = getNextSpreadIndex(direction);
+    const toSpread = getSpreadAt(toIndex);
+    if (!fromSpread || !toSpread) {
+        return false;
+    }
+
+    const frontFace = direction === 1 ? fromSpread.right : fromSpread.left;
+    const backFace = direction === 1 ? toSpread.left : toSpread.right;
+    const staticLeftFace = direction === 1 ? fromSpread.left : toSpread.left;
+    const staticRightFace = direction === 1 ? toSpread.right : fromSpread.right;
+
+    if (!frontFace || !backFace) {
         return false;
     }
 
     runtime.turn.active = true;
     runtime.turn.direction = direction;
-    runtime.turn.fromIndex = runtime.currentPageIndex;
+    runtime.turn.fromIndex = runtime.currentSpreadIndex;
     runtime.turn.toIndex = toIndex;
     runtime.turn.progress = 0.018;
     runtime.turn.gripY = 0.5;
     runtime.phase = 'dragging';
 
+    configureTurnerGeometry(direction);
     setTurnerMarkup(
-        buildPageSheetMarkup(fromPage, { forTurn: true }),
-        buildPageSheetMarkup(toPage, { forTurn: true }),
+        buildFaceMarkup(frontFace, { forTurn: true }),
+        buildFaceMarkup(backFace, { forTurn: true }),
     );
-    renderStaticPage(toIndex);
+    renderStaticSpreadFaces(staticLeftFace, staticRightFace);
     updateTurnerTransforms();
     return true;
 }
@@ -1106,7 +1310,7 @@ async function openBook() {
         return;
     }
 
-    const opened = await tweenMotion(buildRevealPose(), OPEN_COVER_MS, easeOutBack, token);
+    const opened = await tweenMotion(buildRevealPose(), OPEN_COVER_MS, easeOutCubic, token);
     if (!opened) {
         return;
     }
@@ -1131,7 +1335,7 @@ async function closeBook(notifyParent = true) {
     clearTimeout(runtime.toastTimer);
 
     if (runtime.turn.active) {
-        renderStaticPage(runtime.turn.fromIndex);
+        renderStaticSpread(runtime.turn.fromIndex);
         clearTurner();
     }
 
@@ -1195,7 +1399,7 @@ async function animateTurnTo(targetProgress, duration, onComplete) {
 
 async function commitTurn() {
     const completed = await animateTurnTo(1, TURN_COMMIT_MS, () => {
-        setCurrentPageIndex(runtime.turn.toIndex);
+        setCurrentSpreadIndex(runtime.turn.toIndex);
         clearTurner();
         runtime.phase = 'browse';
     });
@@ -1207,7 +1411,7 @@ async function commitTurn() {
 
 async function rollbackTurn() {
     const completed = await animateTurnTo(0, TURN_ROLLBACK_MS, () => {
-        renderStaticPage(runtime.turn.fromIndex);
+        renderStaticSpread(runtime.turn.fromIndex);
         clearTurner();
         runtime.phase = 'browse';
     });
@@ -1218,7 +1422,10 @@ async function rollbackTurn() {
 }
 
 function updateTurnProgressFromPointer(event) {
-    const bounds = dom.pageViewport.getBoundingClientRect();
+    const viewport = runtime.turn.surfaceSide === 'left'
+        ? dom.leftPageViewport
+        : dom.pageViewport;
+    const bounds = viewport.getBoundingClientRect();
     const direction = runtime.turn.direction;
     const delta = direction === 1
         ? (runtime.turn.startX - event.clientX)
@@ -1235,6 +1442,9 @@ function releaseTurn(pointerId) {
     if (pointerId !== null && dom.pageViewport.hasPointerCapture(pointerId)) {
         dom.pageViewport.releasePointerCapture(pointerId);
     }
+    if (pointerId !== null && dom.leftPageViewport.hasPointerCapture(pointerId)) {
+        dom.leftPageViewport.releasePointerCapture(pointerId);
+    }
     runtime.turn.pointerId = null;
 }
 
@@ -1249,23 +1459,25 @@ function handleTurnPointerDown(event) {
         return;
     }
 
-    const bounds = dom.pageViewport.getBoundingClientRect();
+    const targetSurface = event.currentTarget;
+    const bounds = targetSurface.getBoundingClientRect();
     runtime.turn.armed = true;
     runtime.turn.pointerId = event.pointerId;
     runtime.turn.startX = event.clientX;
     runtime.turn.startY = event.clientY;
     runtime.turn.gripY = clamp((event.clientY - bounds.top) / bounds.height, 0.08, 0.92);
     runtime.turn.moved = false;
-    runtime.turn.direction = 1;
-    runtime.turn.fromIndex = runtime.currentPageIndex;
-    runtime.turn.toIndex = runtime.currentPageIndex;
+    runtime.turn.surfaceSide = targetSurface?.dataset?.turnSurface || 'right';
+    runtime.turn.direction = runtime.turn.surfaceSide === 'left' ? -1 : 1;
+    runtime.turn.fromIndex = runtime.currentSpreadIndex;
+    runtime.turn.toIndex = runtime.currentSpreadIndex;
     runtime.turn.downInteractive = Boolean(
         getClosestElement(
             event.target,
             '[data-achievement-id], .page-sheet__focus, button, a, input, textarea, select, label',
         ),
     );
-    dom.pageViewport.setPointerCapture(event.pointerId);
+    targetSurface.setPointerCapture(event.pointerId);
 }
 
 function handleTurnPointerMove(event) {
@@ -1288,18 +1500,13 @@ function handleTurnPointerMove(event) {
             return;
         }
 
-        let direction = deltaX < 0 ? 1 : -1;
-        if (!hasTurnTarget(direction)) {
-            const fallback = hasTurnTarget(1)
-                ? 1
-                : (hasTurnTarget(-1) ? -1 : 0);
-            if (!fallback) {
-                runtime.turn.armed = false;
-                runtime.turn.pointerId = null;
-                runtime.turn.downInteractive = false;
-                return;
-            }
-            direction = fallback;
+        const direction = runtime.turn.surfaceSide === 'left' ? -1 : 1;
+        const movingTowardTurn = direction === 1
+            ? deltaX <= -threshold
+            : deltaX >= threshold;
+
+        if (!movingTowardTurn || !hasTurnTarget(direction)) {
+            return;
         }
 
         if (!prepareTurn(direction)) {
@@ -1307,7 +1514,7 @@ function handleTurnPointerMove(event) {
         }
 
         runtime.turn.armed = false;
-        dom.pageViewport.setPointerCapture(event.pointerId);
+        event.currentTarget.setPointerCapture(event.pointerId);
         updateTurnProgressFromPointer(event);
         event.preventDefault();
         return;
@@ -1327,6 +1534,7 @@ async function handleTurnPointerUp(event) {
         runtime.turn.armed = false;
         runtime.turn.pointerId = null;
         runtime.turn.downInteractive = false;
+        runtime.turn.surfaceSide = 'right';
         runtime.turn.moved = false;
         return;
     }
@@ -1356,6 +1564,7 @@ function handleTurnPointerCancel(event) {
         runtime.turn.armed = false;
         runtime.turn.pointerId = null;
         runtime.turn.downInteractive = false;
+        runtime.turn.surfaceSide = 'right';
         runtime.turn.moved = false;
         return;
     }
@@ -1458,23 +1667,23 @@ function jumpToChapter(chapterId) {
         return;
     }
 
-    const index = runtime.firstPageByChapter.get(chapterId);
-    if (!Number.isInteger(index)) {
+    const pageIndex = runtime.firstPageByChapter.get(chapterId);
+    if (!Number.isInteger(pageIndex)) {
         return;
     }
 
-    setCurrentPageIndex(index);
+    setCurrentSpreadIndex(findSpreadIndexByPageIndex(pageIndex));
     void settleToBrowse();
 }
 
 function jumpToAchievement(id) {
-    const index = findPageIndexByAchievement(id);
-    if (index < 0) {
+    const pageIndex = findPageIndexByAchievement(id);
+    if (pageIndex < 0) {
         return false;
     }
 
     runtime.selectedAchievementId = normalizeAchievementId(id);
-    setCurrentPageIndex(index);
+    setCurrentSpreadIndex(findSpreadIndexByPageIndex(pageIndex));
     return true;
 }
 
@@ -1691,7 +1900,15 @@ function bindEvents() {
     });
 
     dom.chapterRail.addEventListener('click', handleChapterRailClick);
+    dom.leftPageSheet.addEventListener('click', handleChapterRailClick);
 
+    dom.leftPageViewport.addEventListener('pointerdown', handleTurnPointerDown);
+    dom.leftPageViewport.addEventListener('pointermove', handleTurnPointerMove);
+    dom.leftPageViewport.addEventListener('pointerup', event => {
+        void handleTurnPointerUp(event);
+    });
+    dom.leftPageViewport.addEventListener('pointercancel', handleTurnPointerCancel);
+    dom.leftPageViewport.addEventListener('wheel', handlePageWheel, { passive: false });
     dom.pageViewport.addEventListener('pointerdown', handleTurnPointerDown);
     dom.pageViewport.addEventListener('pointermove', handleTurnPointerMove);
     dom.pageViewport.addEventListener('pointerup', event => {
@@ -1699,6 +1916,7 @@ function bindEvents() {
     });
     dom.pageViewport.addEventListener('pointercancel', handleTurnPointerCancel);
     dom.pageViewport.addEventListener('wheel', handlePageWheel, { passive: false });
+    dom.leftPageSheet.addEventListener('click', handlePageSheetClick);
     dom.pageSheet.addEventListener('click', handlePageSheetClick);
 
     dom.closeCorner.addEventListener('pointerdown', handleCloseCornerDown);
@@ -1713,14 +1931,16 @@ function bindEvents() {
     window.addEventListener('keydown', handleSceneKeyDown);
     window.addEventListener('resize', handleResize);
 
+    dom.leftPageViewport.style.touchAction = 'none';
     dom.pageViewport.style.touchAction = 'none';
     dom.closeCorner.style.touchAction = 'none';
 }
 
 function initialize() {
     buildPages();
+    buildSpreads();
     createTurnStrips();
-    setCurrentPageIndex(0);
+    setCurrentSpreadIndex(0);
     Object.assign(runtime.motion, buildLauncherPose());
     applyMotion();
     bindEvents();

@@ -33,9 +33,16 @@
                 <div class="album-rig__spine"></div>
                 <div class="album-rig__stack album-rig__stack--left"></div>
                 <div class="album-rig__stack album-rig__stack--right"></div>
+                <div class="album-close-corner" id="closeCorner" aria-hidden="true"></div>
 
-                <section class="album-page" id="pageViewport">
-                    <div class="album-page__surface" id="pageSurface">
+                <section class="album-page album-page--left" id="leftPageViewport" data-turn-surface="left">
+                    <div class="album-page__surface album-page__surface--left">
+                        <div class="album-page__sheet" id="leftPageSheet"></div>
+                    </div>
+                </section>
+
+                <section class="album-page album-page--right" id="pageViewport" data-turn-surface="right">
+                    <div class="album-page__surface album-page__surface--right" id="pageSurface">
                         <div class="album-page__sheet" id="pageSheet"></div>
                     </div>
                 </section>
@@ -54,7 +61,7 @@
                     <div class="album-cover__face album-cover__face--back">
                         <div class="album-cover__liner"></div>
                         <div class="cover-inside">
-                            <div class="cover-inside__corner" id="closeCorner" aria-hidden="true"></div>
+                            <div class="cover-inside__corner" aria-hidden="true"></div>
                             <div class="cover-inside__eyebrow">Private Archive</div>
                             <h1 class="cover-inside__title" id="insideTitle">Achievement Archive</h1>
                             <div class="cover-inside__summary">
