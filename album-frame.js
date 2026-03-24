@@ -6,17 +6,21 @@ import {
 import { getAchievementAsset } from './data/asset-manifest.js';
 
 const PAGE_SIZE = 4;
-const TURN_STRIP_COUNT = 18;
+const TURN_STRIP_COUNT = 24;
 
 const OPEN_SUMMON_MS = 520;
 const OPEN_MORPH_MS = 380;
+const OPEN_RELEASE_MS = 180;
 const OPEN_COVER_MS = 640;
+const OPEN_SETTLE_MS = 180;
+const CLOSE_CATCH_MS = 170;
 const CLOSE_COVER_MS = 460;
 const CLOSE_MORPH_MS = 320;
 const CLOSE_DISMISS_MS = 460;
 const TURN_COMMIT_MS = 420;
 const TURN_ROLLBACK_MS = 280;
 const BROWSE_RETURN_MS = 240;
+const WHEEL_TURN_THRESHOLD = 24;
 
 const dom = {
     root: document.documentElement,
@@ -50,11 +54,13 @@ const runtime = {
     firstPageByChapter: new Map(),
     currentPageIndex: 0,
     activeChapterId: CHAPTERS[0]?.id ?? '',
+    selectedAchievementId: '',
     phase: 'closed',
     animationToken: 0,
     toastTimer: 0,
     turn: {
         active: false,
+        armed: false,
         direction: 1,
         progress: 0,
         gripY: 0.5,
@@ -64,6 +70,7 @@ const runtime = {
         moved: false,
         fromIndex: 0,
         toIndex: 0,
+        downInteractive: false,
     },
     closeDrag: {
         active: false,
@@ -95,6 +102,15 @@ function createMotion() {
         pageTilt: 0,
         pageShift: 0,
         pageReveal: 0,
+        pageDepth: 18,
+        coverLift: 0,
+        coverTwist: 0,
+        stackLeftShift: 0,
+        stackRightShift: 0,
+        stackLeftScale: 1,
+        stackRightScale: 1,
+        hingeShadow: 0.18,
+        spineGlow: 0.12,
     };
 }
 
@@ -114,6 +130,18 @@ function easeInOutCubic(value) {
     return value < 0.5
         ? 4 * value * value * value
         : 1 - (((-2 * value) + 2) ** 3) / 2;
+}
+
+function easeOutBack(value) {
+    const c1 = 1.70158;
+    const c3 = c1 + 1;
+    return 1 + (c3 * ((value - 1) ** 3)) + (c1 * ((value - 1) ** 2));
+}
+
+function easeInBack(value) {
+    const c1 = 1.70158;
+    const c3 = c1 + 1;
+    return c3 * value * value * value - c1 * value * value;
 }
 
 function normalizeAchievementId(value) {
@@ -166,26 +194,43 @@ function resolveAssetUrl(value) {
     }
 }
 
+function getClosestElement(target, selector) {
+    if (!target) {
+        return null;
+    }
+
+    if (typeof target.closest === 'function') {
+        return target.closest(selector);
+    }
+
+    if (target.parentElement && typeof target.parentElement.closest === 'function') {
+        return target.parentElement.closest(selector);
+    }
+
+    return null;
+}
+
 function isUnlocked(id) {
     return runtime.unlocked.has(normalizeAchievementId(id));
 }
 
 function getViewportMetrics() {
+    const closedWidth = Math.min(window.innerWidth * 0.18, 320);
     return {
         width: window.innerWidth,
         height: window.innerHeight,
-        rigHeight: Math.min(window.innerHeight * 0.8, 900),
-        closedWidth: Math.min(window.innerWidth * 0.23, 300),
-        closedHeight: Math.min(window.innerWidth * 0.17, 222),
+        rigHeight: Math.min(window.innerHeight * 0.84, 940),
+        closedWidth,
+        closedHeight: closedWidth * 1.26,
     };
 }
 
 function getLauncherRect() {
     const fallback = {
         left: window.innerWidth - 126,
-        top: window.innerHeight - 96,
-        width: 104,
-        height: 78,
+        top: window.innerHeight - 154,
+        width: 106,
+        height: 136,
     };
 
     const source = runtime.session.launcherRect;
@@ -215,24 +260,38 @@ function buildLauncherPose() {
     const rect = getLauncherRect();
     const rectCenterX = rect.left + (rect.width / 2);
     const rectCenterY = rect.top + (rect.height / 2);
+    const scale = clamp(
+        Math.min(rect.width / viewport.closedWidth, rect.height / viewport.closedHeight),
+        0.22,
+        0.72,
+    );
 
     return {
         portalX: rectCenterX - (viewport.width / 2),
-        portalY: rectCenterY - (viewport.height / 2) - (viewport.rigHeight * 0.06),
-        portalScale: clamp(rect.width / viewport.closedWidth, 0.32, 0.72),
-        portalRotate: rect.left > viewport.width * 0.52 ? 7 : -7,
+        portalY: rectCenterY - (viewport.height / 2),
+        portalScale: scale,
+        portalRotate: rect.left > viewport.width * 0.52 ? 10 : -10,
         closedAlpha: 1,
         rigAlpha: 0,
-        rigScale: 0.86,
-        rigLift: 54,
-        rigYaw: -14,
-        rigPitch: 16,
+        rigScale: 0.76,
+        rigLift: 84,
+        rigYaw: -18,
+        rigPitch: 22,
         coverOpen: 0,
         sceneDim: 0,
         sceneGlow: 0.08,
         pageTilt: 0,
         pageShift: 0,
         pageReveal: 0,
+        pageDepth: 14,
+        coverLift: 0,
+        coverTwist: -1.6,
+        stackLeftShift: 0,
+        stackRightShift: 0,
+        stackLeftScale: 0.96,
+        stackRightScale: 0.96,
+        hingeShadow: 0.08,
+        spineGlow: 0.06,
     };
 }
 
@@ -240,20 +299,29 @@ function buildSummonPose() {
     return {
         portalX: 0,
         portalY: 0,
-        portalScale: 1.08,
+        portalScale: 1.02,
         portalRotate: 0,
         closedAlpha: 1,
         rigAlpha: 0,
-        rigScale: 0.92,
-        rigLift: 26,
-        rigYaw: -11,
-        rigPitch: 12,
+        rigScale: 0.84,
+        rigLift: 52,
+        rigYaw: -13,
+        rigPitch: 18,
         coverOpen: 0,
-        sceneDim: 0.24,
-        sceneGlow: 0.14,
+        sceneDim: 0.14,
+        sceneGlow: 0.12,
         pageTilt: 0,
         pageShift: 0,
         pageReveal: 0,
+        pageDepth: 26,
+        coverLift: -6,
+        coverTwist: -1.4,
+        stackLeftShift: -4,
+        stackRightShift: 4,
+        stackLeftScale: 0.98,
+        stackRightScale: 0.99,
+        hingeShadow: 0.16,
+        spineGlow: 0.14,
     };
 }
 
@@ -265,16 +333,25 @@ function buildCoverPose() {
         portalRotate: 0,
         closedAlpha: 0,
         rigAlpha: 1,
-        rigScale: 0.98,
-        rigLift: 10,
-        rigYaw: -7.2,
-        rigPitch: 8.8,
+        rigScale: 0.96,
+        rigLift: 18,
+        rigYaw: -9.8,
+        rigPitch: 10.8,
         coverOpen: 0,
-        sceneDim: 0.58,
-        sceneGlow: 0.2,
-        pageTilt: 8,
-        pageShift: 16,
+        sceneDim: 0.54,
+        sceneGlow: 0.18,
+        pageTilt: 14,
+        pageShift: 34,
         pageReveal: 0,
+        pageDepth: 54,
+        coverLift: -10,
+        coverTwist: -1.2,
+        stackLeftShift: -8,
+        stackRightShift: 8,
+        stackLeftScale: 0.988,
+        stackRightScale: 1.006,
+        hingeShadow: 0.28,
+        spineGlow: 0.24,
     };
 }
 
@@ -288,14 +365,113 @@ function buildBrowsePose() {
         rigAlpha: 1,
         rigScale: 1,
         rigLift: 0,
-        rigYaw: -4.8,
-        rigPitch: 6.2,
+        rigYaw: -5.2,
+        rigPitch: 6.4,
         coverOpen: 1,
         sceneDim: 0.78,
         sceneGlow: 0.28,
         pageTilt: 0,
         pageShift: 0,
         pageReveal: 1,
+        pageDepth: 66,
+        coverLift: 0,
+        coverTwist: 0,
+        stackLeftShift: -12,
+        stackRightShift: 12,
+        stackLeftScale: 0.984,
+        stackRightScale: 1.014,
+        hingeShadow: 0.42,
+        spineGlow: 0.34,
+    };
+}
+
+function buildRevealPose() {
+    return {
+        portalX: 0,
+        portalY: -8,
+        portalScale: 1.006,
+        portalRotate: 0,
+        closedAlpha: 0,
+        rigAlpha: 1,
+        rigScale: 1.014,
+        rigLift: -4,
+        rigYaw: -5.8,
+        rigPitch: 6.9,
+        coverOpen: 1.024,
+        sceneDim: 0.8,
+        sceneGlow: 0.32,
+        pageTilt: 0,
+        pageShift: 0,
+        pageReveal: 1,
+        pageDepth: 72,
+        coverLift: -4,
+        coverTwist: -0.4,
+        stackLeftShift: -14,
+        stackRightShift: 14,
+        stackLeftScale: 0.982,
+        stackRightScale: 1.018,
+        hingeShadow: 0.5,
+        spineGlow: 0.4,
+    };
+}
+
+function buildReleasePose() {
+    return {
+        portalX: 0,
+        portalY: -2,
+        portalScale: 1.002,
+        portalRotate: 0,
+        closedAlpha: 0,
+        rigAlpha: 1,
+        rigScale: 0.988,
+        rigLift: 8,
+        rigYaw: -8.2,
+        rigPitch: 8.6,
+        coverOpen: 0.18,
+        sceneDim: 0.62,
+        sceneGlow: 0.22,
+        pageTilt: 6,
+        pageShift: 18,
+        pageReveal: 0.16,
+        pageDepth: 58,
+        coverLift: -14,
+        coverTwist: -1.4,
+        stackLeftShift: -10,
+        stackRightShift: 9,
+        stackLeftScale: 0.986,
+        stackRightScale: 1.01,
+        hingeShadow: 0.34,
+        spineGlow: 0.28,
+    };
+}
+
+function buildCloseCatchPose() {
+    return {
+        portalX: 0,
+        portalY: -4,
+        portalScale: 1.004,
+        portalRotate: 0,
+        closedAlpha: 0,
+        rigAlpha: 1,
+        rigScale: 0.994,
+        rigLift: 4,
+        rigYaw: -6.2,
+        rigPitch: 7.2,
+        coverOpen: 0.88,
+        sceneDim: 0.76,
+        sceneGlow: 0.3,
+        pageTilt: 2,
+        pageShift: 4,
+        pageReveal: 1,
+        pageDepth: 70,
+        coverLift: -5,
+        coverTwist: 0.4,
+        stackLeftShift: -13,
+        stackRightShift: 13,
+        stackLeftScale: 0.982,
+        stackRightScale: 1.018,
+        hingeShadow: 0.52,
+        spineGlow: 0.38,
     };
 }
 
@@ -319,7 +495,19 @@ function applyMotion() {
     style.setProperty('--page-tilt', `${motion.pageTilt.toFixed(2)}deg`);
     style.setProperty('--page-shift', `${motion.pageShift.toFixed(2)}px`);
     style.setProperty('--page-reveal', motion.pageReveal.toFixed(4));
+    style.setProperty('--page-depth', `${motion.pageDepth.toFixed(2)}px`);
+    style.setProperty('--cover-lift', `${motion.coverLift.toFixed(2)}px`);
+    style.setProperty('--cover-twist', `${motion.coverTwist.toFixed(2)}deg`);
+    style.setProperty('--stack-left-shift', `${motion.stackLeftShift.toFixed(2)}px`);
+    style.setProperty('--stack-right-shift', `${motion.stackRightShift.toFixed(2)}px`);
+    style.setProperty('--stack-left-scale', motion.stackLeftScale.toFixed(4));
+    style.setProperty('--stack-right-scale', motion.stackRightScale.toFixed(4));
+    style.setProperty('--hinge-shadow', motion.hingeShadow.toFixed(4));
+    style.setProperty('--spine-glow', motion.spineGlow.toFixed(4));
 
+    dom.pageViewport.style.pointerEvents = motion.pageReveal >= 0.72 ? 'auto' : 'none';
+    dom.chapterRail.style.pointerEvents = motion.coverOpen >= 0.72 ? 'auto' : 'none';
+    dom.closeCorner.style.pointerEvents = motion.coverOpen >= 0.72 ? 'auto' : 'none';
     dom.closedBook?.setAttribute('aria-hidden', motion.closedAlpha <= 0.02 ? 'true' : 'false');
     dom.rig?.setAttribute('aria-hidden', motion.rigAlpha <= 0.02 ? 'true' : 'false');
 }
@@ -393,6 +581,19 @@ function getChapterProgress(chapterId) {
     };
 }
 
+function getSelectedAchievement(page = getCurrentPage()) {
+    if (!page || !runtime.selectedAchievementId) {
+        return null;
+    }
+
+    const achievement = page.items.find(item => item?.id === runtime.selectedAchievementId) ?? null;
+    if (!achievement || !isUnlocked(achievement.id)) {
+        return null;
+    }
+
+    return achievement;
+}
+
 function buildCardMarkup(meta) {
     if (!meta) {
         return `
@@ -407,6 +608,7 @@ function buildCardMarkup(meta) {
     }
 
     const unlocked = isUnlocked(meta.id);
+    const selected = runtime.selectedAchievementId === meta.id;
     const asset = getAchievementAsset(meta.assetKey || meta.id);
     const photoUrl = unlocked ? resolveAssetUrl(asset?.thumb || asset?.full || '') : '';
     const photoLabel = unlocked
@@ -426,13 +628,42 @@ function buildCardMarkup(meta) {
         : '条件暂未公开';
 
     return `
-        <article class="memory-card ${unlocked ? 'is-unlocked' : 'is-locked'}" data-achievement-id="${escapeAttribute(meta.id)}">
+        <article class="memory-card ${unlocked ? 'is-unlocked' : 'is-locked'} ${selected ? 'is-selected' : ''}" data-achievement-id="${escapeAttribute(meta.id)}">
             <div class="memory-card__photo ${photoUrl ? 'has-asset' : ''}"${photoStyle}>${photoContent}</div>
             <div class="memory-card__title">${escapeHtml(title)}</div>
             <div class="memory-card__desc">${escapeHtml(desc)}</div>
             <div class="memory-card__meta">${escapeHtml(metaLine)}</div>
             <div class="memory-card__id">${escapeHtml(meta.id)}</div>
         </article>
+    `;
+}
+
+function buildFocusMarkup(page, { forTurn = false } = {}) {
+    if (forTurn) {
+        return '';
+    }
+
+    const selected = getSelectedAchievement(page);
+    if (!selected) {
+        return '';
+    }
+
+    const asset = getAchievementAsset(selected.assetKey || selected.id);
+    const previewUrl = resolveAssetUrl(asset?.full || asset?.thumb || '');
+    const previewStyle = previewUrl
+        ? ` style="background-image:url('${escapeAttribute(previewUrl)}');background-size:${escapeAttribute(asset?.fit || 'cover')};background-position:center center;background-repeat:no-repeat;"`
+        : '';
+
+    return `
+        <section class="page-sheet__focus">
+            <div class="page-sheet__focus-photo"${previewStyle}>${previewUrl ? '' : escapeHtml(selected.name || selected.id)}</div>
+            <div class="page-sheet__focus-copy">
+                <div class="page-sheet__focus-id">${escapeHtml(selected.id)}</div>
+                <h3 class="page-sheet__focus-title">${escapeHtml(selected.name || selected.id)}</h3>
+                <div class="page-sheet__focus-desc">${escapeHtml(selected.desc || selected.cond || selected.keywords || '新的回忆已经被妥善收录。')}</div>
+                <div class="page-sheet__focus-meta">${escapeHtml(selected.cond || selected.chapterSubtitle || selected.chapterTitle || '点击其他相片可切换聚焦。')}</div>
+            </div>
+        </section>
     `;
 }
 
@@ -453,13 +684,14 @@ function buildPageSheetMarkup(page, { forTurn = false } = {}) {
     }
 
     const unlockedCount = page.items.reduce((count, item) => count + (isUnlocked(item.id) ? 1 : 0), 0);
+    const hasFocus = Boolean(getSelectedAchievement(page)) && !forTurn;
     const cards = [];
     for (let index = 0; index < PAGE_SIZE; index += 1) {
         cards.push(buildCardMarkup(page.items[index] ?? null));
     }
 
     return `
-        <section class="${forTurn ? 'turn-page' : 'page-sheet'}" data-page-key="${escapeAttribute(page.key)}">
+        <section class="${forTurn ? 'turn-page' : 'page-sheet'} ${hasFocus ? 'has-focus' : ''}" data-page-key="${escapeAttribute(page.key)}">
             <header class="page-sheet__header">
                 <div>
                     <span class="page-sheet__eyebrow">${escapeHtml(page.chapterId)} · PAGE ${String(page.pageIndex + 1).padStart(2, '0')}</span>
@@ -469,6 +701,7 @@ function buildPageSheetMarkup(page, { forTurn = false } = {}) {
                 <div class="page-sheet__badge">${unlockedCount} / ${page.items.length}<br>Unlocked</div>
             </header>
             <div class="page-sheet__grid">${cards.join('')}</div>
+            ${buildFocusMarkup(page, { forTurn })}
             <footer class="page-sheet__footer">
                 <span>${escapeHtml(page.chapterTitle)}</span>
                 <span class="page-sheet__page-number">${String(page.globalIndex + 1).padStart(2, '0')}</span>
@@ -480,6 +713,9 @@ function buildPageSheetMarkup(page, { forTurn = false } = {}) {
 function setCurrentPageIndex(index, { render = true } = {}) {
     runtime.currentPageIndex = clamp(index, 0, Math.max(0, runtime.pages.length - 1));
     runtime.activeChapterId = getCurrentPage()?.chapterId || runtime.activeChapterId;
+    if (!getSelectedAchievement(getCurrentPage())) {
+        runtime.selectedAchievementId = '';
+    }
 
     if (render) {
         renderStaticPage(runtime.currentPageIndex);
@@ -593,50 +829,80 @@ function updateTurnerTransforms() {
 
     const direction = runtime.turn.direction;
     const progress = clamp(runtime.turn.progress, 0, 1);
-    const gripTilt = (0.5 - runtime.turn.gripY) * 14;
+    const progressEase = easeInOutCubic(progress);
+    const gripBias = 0.5 - runtime.turn.gripY;
+    const gripTilt = gripBias * 14;
+    const gripStrength = 0.82 + (Math.abs(gripBias) * 0.92);
     const lastIndex = Math.max(1, TURN_STRIP_COUNT - 1);
 
     runtime.turnStrips.forEach((strip, index) => {
-        const edgeFactor = direction === 1
+        const stripRatio = index / lastIndex;
+        const anchorFalloff = direction === 1
             ? ((TURN_STRIP_COUNT - 1) - index) / lastIndex
             : index / lastIndex;
-        const lag = edgeFactor * 0.2;
-        const local = clamp((progress - lag) / Math.max(0.001, 1 - lag), 0, 1);
-        const wave = Math.sin(local * Math.PI);
-        const angle = (direction === 1 ? -1 : 1) * (180 * local);
-        const lift = wave * (8 + ((1 - edgeFactor) * 26));
-        const skewY = ((0.5 - edgeFactor) * 6) * wave;
-        const rotateX = gripTilt * wave;
-        const shadowOpacity = clamp((wave * 0.56) + (progress * 0.18), 0, 0.76);
-        const shineOpacity = clamp((wave * 0.38) + (progress * 0.08), 0, 0.46);
+        const freeSpan = 1 - anchorFalloff;
+        const lag = (anchorFalloff ** 1.18) * 0.3;
+        const localRaw = clamp((progressEase - lag) / Math.max(0.001, 1 - lag), 0, 1);
+        const local = easeInOutCubic(localRaw);
+        const swing = Math.sin(local * Math.PI);
+        const curlProfile = Math.sin((freeSpan ** 0.82) * Math.PI * 0.96);
+        const bellyProfile = Math.sin(stripRatio * Math.PI);
+        const bow = swing * (0.32 + (curlProfile * 0.68));
+        const angle = (direction === 1 ? -1 : 1) * lerp(0, 180, local);
+        const lift = bow * (12 + (curlProfile * 34) + (bellyProfile * 12) + (local * 10));
+        const driftY = gripBias * (4 + (curlProfile * 6.5)) * swing * gripStrength;
+        const rotateX = gripBias * (10 + (curlProfile * 16)) * swing * gripStrength;
+        const rotateZ = (direction === 1 ? -1 : 1) * swing * (1.2 + (curlProfile * 5.4) + (bellyProfile * 1.6));
+        const driftX = (direction === 1 ? -1 : 1) * bow * (5 + (curlProfile * 16) + (local * 6));
+        const shadowOpacity = clamp((bow * 0.58) + (progress * 0.22) + (curlProfile * 0.08), 0, 0.86);
+        const shineOpacity = clamp((bow * 0.34) + ((1 - anchorFalloff) * 0.08) + (progress * 0.12), 0, 0.56);
 
         strip.el.style.transformOrigin = direction === 1 ? 'left center' : 'right center';
         strip.el.style.zIndex = direction === 1
             ? String(TURN_STRIP_COUNT - index)
             : String(index + 1);
         strip.el.style.transform = `
-            translate3d(0, ${skewY.toFixed(2)}px, ${lift.toFixed(2)}px)
+            translate3d(${driftX.toFixed(2)}px, ${driftY.toFixed(2)}px, ${lift.toFixed(2)}px)
             rotateX(${rotateX.toFixed(2)}deg)
             rotateY(${angle.toFixed(2)}deg)
+            rotateZ(${rotateZ.toFixed(2)}deg)
         `;
         strip.shadow.style.opacity = shadowOpacity.toFixed(3);
         strip.shine.style.opacity = shineOpacity.toFixed(3);
     });
 
-    runtime.motion.pageTilt = (direction === 1 ? -1 : 1) * (progress * 8);
-    runtime.motion.pageShift = (direction === 1 ? -1 : 1) * (progress * 18);
-    runtime.motion.rigYaw = lerp(buildBrowsePose().rigYaw, buildBrowsePose().rigYaw + ((direction === 1 ? -1 : 1) * 1.8), progress);
-    runtime.motion.rigPitch = lerp(buildBrowsePose().rigPitch, buildBrowsePose().rigPitch + 1.8, progress);
-    runtime.motion.sceneGlow = lerp(buildBrowsePose().sceneGlow, buildBrowsePose().sceneGlow + 0.08, progress);
+    const browsePose = buildBrowsePose();
+    const sway = direction === 1 ? -1 : 1;
+    const flex = Math.sin(progressEase * Math.PI);
+
+    runtime.motion.pageTilt = sway * ((progressEase * 7.6) + (flex * 2.2));
+    runtime.motion.pageShift = sway * ((progressEase * 14) + (flex * 9));
+    runtime.motion.pageDepth = lerp(browsePose.pageDepth, browsePose.pageDepth + 16 + (flex * 4), progressEase);
+    runtime.motion.coverLift = lerp(browsePose.coverLift, -4 - (Math.abs(gripBias) * 5.5) - (flex * 3.2), progressEase);
+    runtime.motion.coverTwist = lerp(browsePose.coverTwist, sway * (1.4 + (Math.abs(gripBias) * 1.8)), progressEase);
+    runtime.motion.coverOpen = browsePose.coverOpen + (flex * 0.022);
+    runtime.motion.stackLeftShift = lerp(browsePose.stackLeftShift, browsePose.stackLeftShift + (direction === 1 ? -8 : 18), progressEase);
+    runtime.motion.stackRightShift = lerp(browsePose.stackRightShift, browsePose.stackRightShift + (direction === 1 ? 18 : -8), progressEase);
+    runtime.motion.stackLeftScale = lerp(browsePose.stackLeftScale, direction === 1 ? 0.974 : 0.991, progressEase);
+    runtime.motion.stackRightScale = lerp(browsePose.stackRightScale, direction === 1 ? 1.025 : 1.004, progressEase);
+    runtime.motion.hingeShadow = lerp(browsePose.hingeShadow, browsePose.hingeShadow + 0.18 + (flex * 0.04), progressEase);
+    runtime.motion.spineGlow = lerp(browsePose.spineGlow, browsePose.spineGlow + 0.14 + (Math.abs(gripBias) * 0.04), progressEase);
+    runtime.motion.rigYaw = lerp(browsePose.rigYaw, browsePose.rigYaw + (sway * (1.4 + (flex * 1.1))), progressEase);
+    runtime.motion.rigPitch = lerp(browsePose.rigPitch, browsePose.rigPitch + 2.2 + (flex * 1.4), progressEase);
+    runtime.motion.rigLift = lerp(browsePose.rigLift, -1.5 - (flex * 2.4), progressEase);
+    runtime.motion.sceneGlow = lerp(browsePose.sceneGlow, browsePose.sceneGlow + 0.1, progressEase);
     applyMotion();
 }
 
 function clearTurner({ resetPose = true } = {}) {
     releaseTurn(runtime.turn.pointerId);
     runtime.turn.active = false;
+    runtime.turn.armed = false;
     runtime.turn.progress = 0;
     runtime.turn.moved = false;
     runtime.turn.gripY = 0.5;
+    runtime.turn.direction = 1;
+    runtime.turn.downInteractive = false;
     dom.pageTurner.classList.remove('is-active');
 
     runtime.turnStrips.forEach(strip => {
@@ -666,6 +932,9 @@ function emitHostEvent(type, payload = {}) {
 
 function syncUnlockedSet(ids) {
     runtime.unlocked = new Set(uniqueIds(ids));
+    if (runtime.selectedAchievementId && !isUnlocked(runtime.selectedAchievementId)) {
+        runtime.selectedAchievementId = '';
+    }
     renderInsideCover();
 
     if (!runtime.turn.active) {
@@ -827,13 +1096,23 @@ async function openBook() {
         return;
     }
 
-    const paused = await waitForPause(90, token);
+    const released = await tweenMotion(buildReleasePose(), OPEN_RELEASE_MS, easeOutCubic, token);
+    if (!released) {
+        return;
+    }
+
+    const paused = await waitForPause(48, token);
     if (!paused) {
         return;
     }
 
-    const opened = await tweenMotion(buildBrowsePose(), OPEN_COVER_MS, easeInOutCubic, token);
+    const opened = await tweenMotion(buildRevealPose(), OPEN_COVER_MS, easeOutBack, token);
     if (!opened) {
+        return;
+    }
+
+    const settled = await tweenMotion(buildBrowsePose(), OPEN_SETTLE_MS, easeOutCubic, token);
+    if (!settled) {
         return;
     }
 
@@ -856,6 +1135,11 @@ async function closeBook(notifyParent = true) {
         clearTurner();
     }
 
+    const caught = await tweenMotion(buildCloseCatchPose(), CLOSE_CATCH_MS, easeInOutCubic, token);
+    if (!caught) {
+        return;
+    }
+
     const covered = await tweenMotion(buildCoverPose(), CLOSE_COVER_MS, easeInOutCubic, token);
     if (!covered) {
         return;
@@ -867,7 +1151,7 @@ async function closeBook(notifyParent = true) {
     }
 
     runtime.phase = 'dismiss';
-    const dismissed = await tweenMotion(buildLauncherPose(), CLOSE_DISMISS_MS, easeInOutCubic, token);
+    const dismissed = await tweenMotion(buildLauncherPose(), CLOSE_DISMISS_MS, easeInBack, token);
     if (!dismissed) {
         return;
     }
@@ -939,7 +1223,7 @@ function updateTurnProgressFromPointer(event) {
     const delta = direction === 1
         ? (runtime.turn.startX - event.clientX)
         : (event.clientX - runtime.turn.startX);
-    const progress = clamp(delta / (bounds.width * 0.9), 0, 1);
+    const progress = clamp(delta / Math.max(bounds.width * 0.76, 220), 0, 1);
 
     runtime.turn.progress = progress;
     runtime.turn.gripY = clamp((event.clientY - bounds.top) / bounds.height, 0.08, 0.92);
@@ -955,41 +1239,98 @@ function releaseTurn(pointerId) {
 }
 
 function handleTurnPointerDown(event) {
-    if (event.button !== 0 || runtime.phase !== 'browse' || runtime.closeDrag.active) {
+    if (
+        event.button !== 0
+        || runtime.phase !== 'browse'
+        || runtime.closeDrag.active
+        || runtime.turn.active
+        || runtime.turn.armed
+    ) {
         return;
     }
 
     const bounds = dom.pageViewport.getBoundingClientRect();
-    const pointerX = event.clientX - bounds.left;
-    const direction = pointerX >= bounds.width / 2 ? 1 : -1;
-
-    if (!prepareTurn(direction)) {
-        return;
-    }
-
+    runtime.turn.armed = true;
     runtime.turn.pointerId = event.pointerId;
     runtime.turn.startX = event.clientX;
     runtime.turn.startY = event.clientY;
+    runtime.turn.gripY = clamp((event.clientY - bounds.top) / bounds.height, 0.08, 0.92);
     runtime.turn.moved = false;
-
-    dom.pageViewport.setPointerCapture(event.pointerId);
-    event.preventDefault();
+    runtime.turn.direction = 1;
+    runtime.turn.fromIndex = runtime.currentPageIndex;
+    runtime.turn.toIndex = runtime.currentPageIndex;
+    runtime.turn.downInteractive = Boolean(
+        getClosestElement(
+            event.target,
+            '[data-achievement-id], .page-sheet__focus, button, a, input, textarea, select, label',
+        ),
+    );
 }
 
 function handleTurnPointerMove(event) {
-    if (!runtime.turn.active || runtime.turn.pointerId !== event.pointerId) {
+    if (runtime.turn.pointerId !== event.pointerId) {
+        return;
+    }
+
+    if (!runtime.turn.active) {
+        if (!runtime.turn.armed) {
+            return;
+        }
+
+        const deltaX = event.clientX - runtime.turn.startX;
+        const deltaY = event.clientY - runtime.turn.startY;
+        const absX = Math.abs(deltaX);
+        const absY = Math.abs(deltaY);
+        const threshold = runtime.turn.downInteractive ? 18 : 10;
+
+        if (absX < threshold || absX < absY * 1.08) {
+            return;
+        }
+
+        let direction = deltaX < 0 ? 1 : -1;
+        if (!hasTurnTarget(direction)) {
+            const fallback = hasTurnTarget(1)
+                ? 1
+                : (hasTurnTarget(-1) ? -1 : 0);
+            if (!fallback) {
+                runtime.turn.armed = false;
+                runtime.turn.pointerId = null;
+                runtime.turn.downInteractive = false;
+                return;
+            }
+            direction = fallback;
+        }
+
+        if (!prepareTurn(direction)) {
+            return;
+        }
+
+        runtime.turn.armed = false;
+        dom.pageViewport.setPointerCapture(event.pointerId);
+        updateTurnProgressFromPointer(event);
+        event.preventDefault();
         return;
     }
 
     updateTurnProgressFromPointer(event);
+    event.preventDefault();
 }
 
 async function handleTurnPointerUp(event) {
-    if (!runtime.turn.active || runtime.turn.pointerId !== event.pointerId) {
+    if (runtime.turn.pointerId !== event.pointerId) {
+        return;
+    }
+
+    if (!runtime.turn.active) {
+        runtime.turn.armed = false;
+        runtime.turn.pointerId = null;
+        runtime.turn.downInteractive = false;
+        runtime.turn.moved = false;
         return;
     }
 
     releaseTurn(event.pointerId);
+    event.preventDefault();
 
     if (!runtime.turn.moved && hasTurnTarget(runtime.turn.direction)) {
         runtime.turn.progress = 0.56;
@@ -1004,7 +1345,15 @@ async function handleTurnPointerUp(event) {
 }
 
 function handleTurnPointerCancel(event) {
-    if (!runtime.turn.active || runtime.turn.pointerId !== event.pointerId) {
+    if (runtime.turn.pointerId !== event.pointerId) {
+        return;
+    }
+
+    if (!runtime.turn.active) {
+        runtime.turn.armed = false;
+        runtime.turn.pointerId = null;
+        runtime.turn.downInteractive = false;
+        runtime.turn.moved = false;
         return;
     }
 
@@ -1052,11 +1401,25 @@ function handleCloseCornerMove(event) {
     }
 
     const deltaX = Math.max(0, event.clientX - runtime.closeDrag.startX);
-    const progress = clamp(deltaX / 180, 0, 1);
+    const deltaY = Math.max(0, runtime.closeDrag.startY - event.clientY);
+    const sweep = clamp(deltaX / 180, 0, 1);
+    const peel = clamp(deltaY / 110, 0, 1);
+    const progress = clamp((sweep * 0.84) + (peel * 0.16), 0, 1);
     runtime.closeDrag.progress = progress;
     runtime.closeDrag.moved = runtime.closeDrag.moved || progress > 0.03;
 
-    Object.assign(runtime.motion, mixPose(buildBrowsePose(), buildCoverPose(), progress));
+    const catchBlend = clamp(progress / 0.42, 0, 1);
+    const coverBlend = clamp((progress - 0.3) / 0.7, 0, 1);
+    const catchPose = mixPose(buildBrowsePose(), buildCloseCatchPose(), easeOutCubic(catchBlend));
+    const coverPose = mixPose(catchPose, buildCoverPose(), easeInOutCubic(coverBlend));
+    const flex = Math.sin(progress * Math.PI);
+
+    Object.assign(runtime.motion, coverPose, {
+        rigYaw: coverPose.rigYaw - (progress * 0.8),
+        rigPitch: coverPose.rigPitch + (progress * 0.4),
+        coverTwist: coverPose.coverTwist - (flex * 1.4),
+        coverLift: coverPose.coverLift - (flex * 3.2),
+    });
     applyMotion();
 }
 
@@ -1107,6 +1470,7 @@ function jumpToAchievement(id) {
         return false;
     }
 
+    runtime.selectedAchievementId = normalizeAchievementId(id);
     setCurrentPageIndex(index);
     return true;
 }
@@ -1224,7 +1588,7 @@ function getState() {
 }
 
 function handleChapterRailClick(event) {
-    const button = event.target.closest('[data-chapter-id]');
+    const button = getClosestElement(event.target, '[data-chapter-id]');
     if (!button) {
         return;
     }
@@ -1232,9 +1596,54 @@ function handleChapterRailClick(event) {
     jumpToChapter(button.getAttribute('data-chapter-id'));
 }
 
+function handlePageSheetClick(event) {
+    const card = getClosestElement(event.target, '[data-achievement-id]');
+    if (!card) {
+        if (runtime.selectedAchievementId) {
+            runtime.selectedAchievementId = '';
+            renderStaticPage();
+        }
+        return;
+    }
+
+    const achievementId = normalizeAchievementId(card.getAttribute('data-achievement-id'));
+    if (!achievementId || !isUnlocked(achievementId)) {
+        return;
+    }
+
+    runtime.selectedAchievementId = runtime.selectedAchievementId === achievementId ? '' : achievementId;
+    renderStaticPage();
+}
+
+function handlePageWheel(event) {
+    if (runtime.phase !== 'browse' || runtime.turn.active || runtime.closeDrag.active) {
+        return;
+    }
+
+    if (Math.abs(event.deltaY) < WHEEL_TURN_THRESHOLD) {
+        return;
+    }
+
+    const direction = event.deltaY > 0 ? 1 : -1;
+    if (!hasTurnTarget(direction)) {
+        return;
+    }
+
+    event.preventDefault();
+    if (prepareTurn(direction)) {
+        runtime.turn.progress = 0.58;
+        void commitTurn();
+    }
+}
+
 function handleSceneKeyDown(event) {
     if (event.key === 'Escape') {
         event.preventDefault();
+        if (runtime.selectedAchievementId && runtime.phase === 'browse') {
+            runtime.selectedAchievementId = '';
+            renderStaticPage();
+            return;
+        }
         void closeBook(true);
         return;
     }
@@ -1286,6 +1695,8 @@ function bindEvents() {
         void handleTurnPointerUp(event);
     });
     dom.pageViewport.addEventListener('pointercancel', handleTurnPointerCancel);
+    dom.pageViewport.addEventListener('wheel', handlePageWheel, { passive: false });
+    dom.pageSheet.addEventListener('click', handlePageSheetClick);
 
     dom.closeCorner.addEventListener('pointerdown', handleCloseCornerDown);
     dom.closeCorner.addEventListener('pointermove', handleCloseCornerMove);
