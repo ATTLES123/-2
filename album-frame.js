@@ -21,12 +21,9 @@ const BROWSE_RETURN_MS = 240;
 const dom = {
     root: document.documentElement,
     scene: document.getElementById('scene'),
-    portal: document.getElementById('portal'),
     closedBook: document.getElementById('closedBook'),
     rig: document.getElementById('rig'),
-    cover: document.getElementById('cover'),
     pageViewport: document.getElementById('pageViewport'),
-    pageSurface: document.getElementById('pageSurface'),
     pageSheet: document.getElementById('pageSheet'),
     pageTurner: document.getElementById('pageTurner'),
     chapterRail: document.getElementById('chapterRail'),
@@ -55,7 +52,6 @@ const runtime = {
     activeChapterId: CHAPTERS[0]?.id ?? '',
     phase: 'closed',
     animationToken: 0,
-    hoverPointer: null,
     toastTimer: 0,
     turn: {
         active: false,
@@ -98,6 +94,7 @@ function createMotion() {
         sceneGlow: 0.08,
         pageTilt: 0,
         pageShift: 0,
+        pageReveal: 0,
     };
 }
 
@@ -235,6 +232,7 @@ function buildLauncherPose() {
         sceneGlow: 0.08,
         pageTilt: 0,
         pageShift: 0,
+        pageReveal: 0,
     };
 }
 
@@ -255,6 +253,7 @@ function buildSummonPose() {
         sceneGlow: 0.14,
         pageTilt: 0,
         pageShift: 0,
+        pageReveal: 0,
     };
 }
 
@@ -275,6 +274,7 @@ function buildCoverPose() {
         sceneGlow: 0.2,
         pageTilt: 8,
         pageShift: 16,
+        pageReveal: 0,
     };
 }
 
@@ -295,6 +295,7 @@ function buildBrowsePose() {
         sceneGlow: 0.28,
         pageTilt: 0,
         pageShift: 0,
+        pageReveal: 1,
     };
 }
 
@@ -317,6 +318,7 @@ function applyMotion() {
     style.setProperty('--scene-glow', motion.sceneGlow.toFixed(4));
     style.setProperty('--page-tilt', `${motion.pageTilt.toFixed(2)}deg`);
     style.setProperty('--page-shift', `${motion.pageShift.toFixed(2)}px`);
+    style.setProperty('--page-reveal', motion.pageReveal.toFixed(4));
 
     dom.closedBook?.setAttribute('aria-hidden', motion.closedAlpha <= 0.02 ? 'true' : 'false');
     dom.rig?.setAttribute('aria-hidden', motion.rigAlpha <= 0.02 ? 'true' : 'false');
@@ -407,14 +409,13 @@ function buildCardMarkup(meta) {
     const unlocked = isUnlocked(meta.id);
     const asset = getAchievementAsset(meta.assetKey || meta.id);
     const photoUrl = unlocked ? resolveAssetUrl(asset?.thumb || asset?.full || '') : '';
+    const photoLabel = unlocked
+        ? (asset?.placeholder || meta.name || meta.id).slice(0, 18)
+        : '?';
     const photoStyle = photoUrl
         ? ` style="background-image:url('${escapeAttribute(photoUrl)}');background-size:${escapeAttribute(asset?.fit || 'cover')};background-position:center center;background-repeat:no-repeat;"`
         : '';
     const photoContent = photoUrl ? '' : escapeHtml(photoLabel);
-
-    const photoLabel = unlocked
-        ? (asset?.placeholder || meta.name || meta.id).slice(0, 18)
-        : '?';
 
     const title = unlocked ? meta.name : '未解锁';
     const desc = unlocked
@@ -630,7 +631,7 @@ function updateTurnerTransforms() {
     applyMotion();
 }
 
-function clearTurner() {
+function clearTurner({ resetPose = true } = {}) {
     releaseTurn(runtime.turn.pointerId);
     runtime.turn.active = false;
     runtime.turn.progress = 0;
@@ -646,8 +647,10 @@ function clearTurner() {
         strip.shine.style.opacity = '0';
     });
 
-    Object.assign(runtime.motion, buildBrowsePose());
-    applyMotion();
+    if (resetPose) {
+        Object.assign(runtime.motion, buildBrowsePose());
+        applyMotion();
+    }
 }
 
 function emitHostEvent(type, payload = {}) {
@@ -807,7 +810,7 @@ async function openBook() {
     runtime.phase = 'summoning';
 
     clearTimeout(runtime.toastTimer);
-    clearTurner();
+    clearTurner({ resetPose: false });
     Object.assign(runtime.motion, buildLauncherPose());
     renderStaticPage();
     renderInsideCover();
@@ -1205,9 +1208,7 @@ function hibernate() {
     dom.unlockToast.classList.remove('is-visible');
     renderStaticPage();
     renderInsideCover();
-    Object.assign(runtime.motion, buildLauncherPose());
-    applyMotion();
-    clearTurner();
+    clearTurner({ resetPose: false });
     Object.assign(runtime.motion, buildLauncherPose());
     applyMotion();
 }

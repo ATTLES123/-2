@@ -15,6 +15,7 @@
     --scene-glow: 0.08;
     --page-tilt: 0deg;
     --page-shift: 0px;
+    --page-reveal: 0;
     --rig-width: min(85vw, 1360px);
     --rig-height: min(80vh, 900px);
     --closed-width: min(23vw, 300px);
@@ -384,6 +385,7 @@ body {
     height: 84%;
     transform: translateX(var(--page-shift)) rotateY(var(--page-tilt));
     transform-style: preserve-3d;
+    opacity: var(--page-reveal);
     pointer-events: auto;
     cursor: grab;
 }

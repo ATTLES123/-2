@@ -20,6 +20,7 @@ const state = {
     lastObservedTriggerValue: '',
     frameLoaded: false,
     pendingOpenToId: '',
+    subscriptions: [],
     ui: {
         root: null,
         button: null,
@@ -233,6 +234,10 @@ function writeScopedVariable(context, key, scope, value) {
 }
 
 function getUnlockedIds(context, binding) {
+    if (!context || !binding) {
+        return [];
+    }
+
     const metadataIds = parseUnlockedIds(context.chatMetadata?.album_book?.unlocked_ids);
     const variableIds = parseUnlockedIds(readScopedVariable(context, binding.variableKey, binding.variableScope));
     const mvuIds = readMvuAchievementIds(binding);
@@ -240,6 +245,10 @@ function getUnlockedIds(context, binding) {
 }
 
 function persistUnlockedIds(context, binding, unlockedIds) {
+    if (!context || !binding) {
+        return;
+    }
+
     const ids = uniqueIds(unlockedIds);
 
     if (!context.chatMetadata) {
@@ -263,15 +272,6 @@ function getFrameApi() {
     }
 
     return state.ui.frame.contentWindow.AlbumFrame ?? null;
-}
-
-function escapeHtml(value) {
-    return String(value ?? '')
-        .replaceAll('&', '&amp;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;')
-        .replaceAll('"', '&quot;')
-        .replaceAll("'", '&#39;');
 }
 
 function setButtonVisible(visible) {
@@ -389,6 +389,7 @@ async function createSettingsPanel() {
     }
 
     state.ui.settings = null;
+    document.getElementById('album-bridge-status')?.remove();
 
     const container = document.getElementById('extensions_settings2')
         ?? document.getElementById('extensions_settings')
@@ -443,11 +444,15 @@ function createUi() {
         return;
     }
 
+    document.getElementById('album-bridge-anchor')?.remove();
+    document.getElementById('album-bridge-overlay')?.remove();
+
     state.ui.root = null;
     state.ui.button = null;
     state.ui.overlay = null;
     state.ui.frame = null;
     state.ui.backdrop = null;
+    state.frameLoaded = false;
 
     const root = document.createElement('div');
     root.id = 'album-bridge-anchor';
@@ -544,6 +549,10 @@ function pollExternalState() {
     }
 
     const context = getContext();
+    if (!context) {
+        return;
+    }
+
     const unlockedIds = getUnlockedIds(context, state.binding);
     const unlockedSignature = JSON.stringify(unlockedIds);
 
@@ -596,6 +605,11 @@ async function refreshBinding() {
     createSettingsPanel();
     const context = getContext();
     if (!context) {
+        state.binding = getBindingFromCharacter(null);
+        state.unlockedIds = [];
+        stopVariableWatch();
+        setButtonVisible(false);
+        hideOverlay();
         renderSettingsState();
         return;
     }
@@ -629,6 +643,10 @@ function unlock(id) {
     }
 
     const context = getContext();
+    if (!context) {
+        return;
+    }
+
     const nextIds = uniqueIds([...state.unlockedIds, normalizedId]);
     persistUnlockedIds(context, state.binding, nextIds);
     syncFrameUnlocked(nextIds, normalizedId);
@@ -641,6 +659,10 @@ function lock(id) {
     }
 
     const context = getContext();
+    if (!context) {
+        return;
+    }
+
     const nextIds = state.unlockedIds.filter(item => item !== normalizedId);
     persistUnlockedIds(context, state.binding, nextIds);
     getFrameApi()?.lock?.(normalizedId, nextIds);
@@ -652,8 +674,21 @@ function syncUnlocked(ids) {
     }
 
     const context = getContext();
+    if (!context) {
+        return;
+    }
+
     persistUnlockedIds(context, state.binding, uniqueIds(ids));
     syncFrameUnlocked(state.unlockedIds);
+}
+
+function unbindContextEvents() {
+    for (const subscription of state.subscriptions) {
+        subscription.eventSource?.off?.(subscription.type, subscription.handler);
+        subscription.eventSource?.removeListener?.(subscription.type, subscription.handler);
+    }
+
+    state.subscriptions = [];
 }
 
 function bindRuntimeApi() {
@@ -681,24 +716,64 @@ function bindRuntimeApi() {
 }
 
 function bindContextEvents() {
+    unbindContextEvents();
+
     const context = getContext();
     if (!context?.eventSource || !context?.eventTypes) {
         return;
     }
 
     const refresh = () => void refreshBinding();
+    const bindings = [
+        context.eventTypes.APP_READY,
+        context.eventTypes.CHAT_CHANGED,
+        context.eventTypes.CHARACTER_PAGE_LOADED,
+    ];
 
-    context.eventSource.on(context.eventTypes.APP_READY, refresh);
-    context.eventSource.on(context.eventTypes.CHAT_CHANGED, refresh);
-    context.eventSource.on(context.eventTypes.CHARACTER_PAGE_LOADED, refresh);
+    for (const type of bindings) {
+        context.eventSource.on(type, refresh);
+        state.subscriptions.push({
+            eventSource: context.eventSource,
+            type,
+            handler: refresh,
+        });
+    }
+}
+
+function destroy() {
+    stopVariableWatch();
+    unbindContextEvents();
+    document.getElementById('album-bridge-anchor')?.remove();
+    document.getElementById('album-bridge-overlay')?.remove();
+    document.getElementById('album-bridge-status')?.remove();
+    document.body?.classList?.remove('album-bridge-modal-open');
+
+    delete window.AlbumBridge;
+    delete window.__albumBridgePluginHost;
+    delete window.__albumBridgePureInstance;
+
+    state.binding = null;
+    state.unlockedIds = [];
+    state.frameLoaded = false;
+    state.pendingOpenToId = '';
+    state.ui = {
+        root: null,
+        button: null,
+        overlay: null,
+        frame: null,
+        backdrop: null,
+        settings: null,
+    };
 }
 
 function boot() {
     try {
+        window.__albumBridgePureInstance?.destroy?.();
         createUi();
         createSettingsPanel();
         bindRuntimeApi();
         bindContextEvents();
+        window.__albumBridgePureInstance = { destroy };
         void refreshBinding();
     } catch (error) {
         console.error('[Album Bridge Pure] Boot failed:', error);
